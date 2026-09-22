@@ -94,7 +94,7 @@ module.exports = async (req, res) => {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 6. Inject Blue Run Button + Full UI & Code Cache Manager
+    // 6. Inject Blue Run Button + Native UI State & Code Restorer
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
@@ -129,6 +129,19 @@ module.exports = async (req, res) => {
               localStorage.setItem(STATE_KEY, JSON.stringify(state));
             }
 
+            function isPageDark() {
+              return document.documentElement.classList.contains('dark') || 
+                     document.body.classList.contains('dark') || 
+                     !!document.querySelector('.dark, [data-theme="dark"]');
+            }
+
+            function findThemeBtn() {
+              return Array.from(document.querySelectorAll('button, div[role="button"], a, svg')).find(el => {
+                const text = (el.innerText || el.getAttribute('aria-label') || el.title || el.className || '').toLowerCase();
+                return text.includes('theme') || text.includes('mode') || text.includes('dark') || text.includes('light');
+              });
+            }
+
             function initSync() {
               let restoredCode = false;
               let restoredTheme = false;
@@ -136,13 +149,12 @@ module.exports = async (req, res) => {
               setInterval(() => {
                 const state = getSavedState();
 
-                // 1. Synchronize Monaco Editor Code & Theme
+                // 1. Synchronize Code with Monaco Editor
                 if (window.monaco && window.monaco.editor) {
                   const editors = window.monaco.editor.getEditors();
                   if (editors.length > 0) {
                     const editor = editors[0];
 
-                    // Restore Code
                     if (state.code && (!restoredCode || editor.getValue() !== state.code)) {
                       if (!restoredCode) {
                         editor.setValue(state.code);
@@ -150,50 +162,44 @@ module.exports = async (req, res) => {
                       }
                     }
 
-                    // Track Code Changes
                     if (!editor.datasetBound) {
                       editor.datasetBound = true;
                       editor.onDidChangeModelContent(() => {
                         saveState('code', editor.getValue());
                       });
                     }
-
-                    // Restore Saved Theme
-                    if (state.theme && !restoredTheme) {
-                      try {
-                        const targetTheme = state.theme === 'dark' ? 'vs-dark' : 'vs';
-                        window.monaco.editor.setTheme(targetTheme);
-                        if (state.theme === 'dark') {
-                          document.documentElement.classList.add('dark');
-                          document.body.classList.add('dark');
-                        } else {
-                          document.documentElement.classList.remove('dark');
-                          document.body.classList.remove('dark');
-                        }
-                      } catch(e) {}
-                      restoredTheme = true;
-                    }
                   }
                 }
 
-                // 2. Track Theme Switcher UI Elements
-                document.querySelectorAll('button, a, div[role="button"]').forEach(btn => {
+                // 2. Restore Theme via Native UI Button
+                if (state.theme && !restoredTheme) {
+                  const currentlyDark = isPageDark();
+                  if ((state.theme === 'dark' && !currentlyDark) || (state.theme === 'light' && currentlyDark)) {
+                    const themeBtn = findThemeBtn();
+                    if (themeBtn) {
+                      themeBtn.click();
+                      restoredTheme = true;
+                    }
+                  } else {
+                    restoredTheme = true;
+                  }
+                }
+
+                // Track manual Theme Button Clicks
+                document.querySelectorAll('button, div[role="button"], a').forEach(btn => {
                   if (btn.dataset.themeTracker) return;
-                  const label = (btn.innerText || btn.ariaLabel || btn.className || '').toLowerCase();
-                  if (label.includes('theme') || label.includes('dark') || label.includes('light') || label.includes('mode')) {
+                  const text = (btn.innerText || btn.getAttribute('aria-label') || btn.title || btn.className || '').toLowerCase();
+                  if (text.includes('theme') || text.includes('mode') || text.includes('dark') || text.includes('light')) {
                     btn.dataset.themeTracker = 'true';
                     btn.addEventListener('click', () => {
                       setTimeout(() => {
-                        const isDark = document.documentElement.classList.contains('dark') || 
-                                       document.body.classList.contains('dark') || 
-                                       (window.monaco && window.monaco.editor && window.monaco.editor.getEditors()[0]?._themeService?.getTheme()?.themeName?.includes('dark'));
-                        saveState('theme', isDark ? 'dark' : 'light');
-                      }, 200);
+                        saveState('theme', isPageDark() ? 'dark' : 'light');
+                      }, 300);
                     });
                   }
                 });
 
-                // 3. Synchronize All Input Fields & Textareas (STDIN, options)
+                // 3. Synchronize STDIN and Input Fields
                 document.querySelectorAll('textarea, input[type="text"]').forEach((el, idx) => {
                   const key = 'input_' + (el.id || el.placeholder || idx);
 
