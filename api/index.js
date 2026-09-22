@@ -1,63 +1,126 @@
-const { createProxyMiddleware } = require('http-proxy-middleware');
 const crypto = require('crypto');
 
 const PASSWORD = 'MarkX99';
 const AUTH_COOKIE_NAME = 'site_access_token';
-
-// Generate a secure token hash based on the password
 const AUTH_TOKEN = crypto.createHash('sha256').update(PASSWORD + '_secret_salt').digest('hex');
 
-const proxy = createProxyMiddleware({
-  target: 'https://onecompiler.com',
-  changeOrigin: true,
-  selfHandleResponse: true,
-  pathRewrite: (path) => {
-    if (path === '/' || path === '/index.html') {
-      return '/embed/python';
+module.exports = async (req, res) => {
+  try {
+    const host = req.headers.host || 'localhost';
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const url = new URL(req.url, `${protocol}://${host}`);
+    const pathname = url.pathname;
+
+    // 1. Handle Password Verification Endpoint
+    if (req.method === 'POST' && pathname === '/auth_login') {
+      let bodyStr = '';
+      for await (const chunk of req) {
+        bodyStr += chunk;
+      }
+      let password = '';
+      try {
+        const json = JSON.parse(bodyStr);
+        password = json.password;
+      } catch (e) {}
+
+      if (password === PASSWORD) {
+        res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(200).end(JSON.stringify({ success: true }));
+      } else {
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(401).end(JSON.stringify({ success: false }));
+      }
     }
-    return path;
-  },
-  headers: {
-    'Referer': 'https://onecompiler.com/embed/python',
-    'Origin': 'https://onecompiler.com',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-  },
-  onProxyRes: function (proxyRes, req, res) {
-    delete proxyRes.headers['x-frame-options'];
-    delete proxyRes.headers['content-security-policy'];
-    delete proxyRes.headers['access-control-allow-origin'];
+
+    // 2. Read Authentication Cookie
+    const cookies = req.headers.cookie || '';
+    const isAuthenticated = cookies.includes(`${AUTH_COOKIE_NAME}=${AUTH_TOKEN}`);
+
+    // Map root to OneCompiler python embed
+    let targetPath = pathname;
+    if (targetPath === '/' || targetPath === '/index.html') {
+      targetPath = '/embed/python';
+    }
+
+    // 3. Serve Password Menu if user is not authenticated and requesting the HTML page
+    const acceptHeader = req.headers.accept || '';
+    const isHtmlRequest = acceptHeader.includes('text/html') || targetPath === '/embed/python';
+
+    if (isHtmlRequest && !isAuthenticated) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).end(getMenuHtml());
+    }
+
+    // 4. Fetch target directly from OneCompiler
+    const targetUrl = `https://onecompiler.com${targetPath}${url.search}`;
+    
+    const forwardHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Referer': 'https://onecompiler.com/embed/python',
+      'Origin': 'https://onecompiler.com',
+    };
+
+    if (req.headers['content-type']) {
+      forwardHeaders['Content-Type'] = req.headers['content-type'];
+    }
+
+    let reqBody = undefined;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      const chunks = [];
+      for await (const chunk of req) {
+        chunks.push(chunk);
+      }
+      reqBody = Buffer.concat(chunks);
+    }
+
+    const targetRes = await fetch(targetUrl, {
+      method: req.method,
+      headers: forwardHeaders,
+      body: reqBody
+    });
+
+    const contentType = targetRes.headers.get('content-type') || '';
+
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    const contentType = proxyRes.headers['content-type'] || '';
-
-    // If request is for main HTML page, check authentication
+    // If HTML, inject Blue Run Button CSS
     if (contentType.includes('text/html')) {
-      // Parse cookies
-      const cookieHeader = req.headers.cookie || '';
-      const isAuthenticated = cookieHeader.includes(`${AUTH_COOKIE_NAME}=${AUTH_TOKEN}`);
+      let html = await targetRes.text();
 
-      // Handle Password Verification API Post
-      if (req.method === 'POST' && req.url.includes('auth_login')) {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', () => {
-          try {
-            const data = JSON.parse(body);
-            if (data.password === PASSWORD) {
-              res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`);
-              res.setHeader('Content-Type', 'application/json');
-              return res.end(JSON.stringify({ success: true }));
-            }
-          } catch (e) {}
-          res.setHeader('Content-Type', 'application/json');
-          return res.end(JSON.stringify({ success: false }));
-        });
-        return;
-      }
+      const blueStyle = `
+        <style>
+          button[class*="run"], button[class*="Run"], .run-button, button:has(svg) {
+            background-color: #0066ff !important;
+            background: #0066ff !important;
+            border-color: #0066ff !important;
+            color: #ffffff !important;
+          }
+          button[class*="run"]:hover, button[class*="Run"]:hover {
+            background-color: #0052cc !important;
+            background: #0052cc !important;
+          }
+        </style>
+      `;
+      html = html.replace('</head>', `${blueStyle}</head>`);
 
-      // If NOT authenticated, serve the Menu / Unlock Dashboard
-      if (!isAuthenticated) {
-        const menuHtml = `<!DOCTYPE html>
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(targetRes.status).end(html);
+    } else {
+      // Pass through static chunks / assets / JSON responses
+      const buffer = Buffer.from(await targetRes.arrayBuffer());
+      if (contentType) res.setHeader('Content-Type', contentType);
+      return res.status(targetRes.status).end(buffer);
+    }
+
+  } catch (err) {
+    res.setHeader('Content-Type', 'text/html');
+    return res.status(500).end(`<h3>Server Proxy Error</h3><pre>${err.message}</pre>`);
+  }
+};
+
+function getMenuHtml() {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -119,42 +182,4 @@ const proxy = createProxyMiddleware({
   </script>
 </body>
 </html>`;
-        res.setHeader('content-type', 'text/html; charset=utf-8');
-        return res.end(menuHtml);
-      }
-
-      // If Authenticated, serve OneCompiler with forced Blue Run button
-      let body = Buffer.from([]);
-      proxyRes.on('data', chunk => { body = Buffer.concat([body, chunk]); });
-      proxyRes.on('end', () => {
-        let html = body.toString('utf8');
-
-        // Force Run Button to remain permanently blue
-        const blueStyle = `
-          <style>
-            button[class*="run"], button[class*="Run"], .run-button, button:has(svg) {
-              background-color: #0066ff !important;
-              background: #0066ff !important;
-              border-color: #0066ff !important;
-              color: #ffffff !important;
-            }
-            button[class*="run"]:hover, button[class*="Run"]:hover {
-              background-color: #0052cc !important;
-              background: #0052cc !important;
-            }
-          </style>
-        `;
-        html = html.replace('</head>', `${blueStyle}</head>`);
-
-        res.setHeader('content-type', 'text/html; charset=utf-8');
-        res.end(html);
-      });
-    } else {
-      proxyRes.pipe(res);
-    }
-  }
-});
-
-module.exports = (req, res) => {
-  return proxy(req, res);
-};
+}
