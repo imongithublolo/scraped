@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const PASSWORD = 'MarkX99';
 const AUTH_COOKIE_NAME = 'site_access_token';
@@ -11,10 +13,26 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `${protocol}://${host}`);
     const pathname = url.pathname;
 
-    // 1. Handle Ugly 90s Idiot Page Route
+    // 1. Handle Ugly 90s Idiot Page Route & Local Media Assets
     if (pathname === '/idiot') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(getIdiotHtml());
+    }
+
+    if (pathname === '/opsec.webp') {
+      const filePath = path.join(process.cwd(), 'opsec.webp');
+      if (fs.existsSync(filePath)) {
+        res.setHeader('Content-Type', 'image/webp');
+        return res.status(200).end(fs.readFileSync(filePath));
+      }
+    }
+
+    if (pathname === '/guby.mp3') {
+      const filePath = path.join(process.cwd(), 'guby.mp3');
+      if (fs.existsSync(filePath)) {
+        res.setHeader('Content-Type', 'audio/mpeg');
+        return res.status(200).end(fs.readFileSync(filePath));
+      }
     }
 
     // 2. Password Verification Endpoint
@@ -374,12 +392,16 @@ function getIdiotHtml() {
   <title>WARNING: IDIOT DETECTED</title>
   <style>
     body {
-      background-color: #ff00ff;
+      background-image: url('/opsec.webp');
+      background-size: 100% 100%;
+      background-repeat: no-repeat;
+      background-attachment: fixed;
       color: #00ff00;
       font-family: "Comic Sans MS", "Comic Sans", cursive, sans-serif;
       text-align: center;
       padding: 30px;
       margin: 0;
+      min-height: 100vh;
     }
     h1 {
       font-size: 55px;
@@ -394,7 +416,7 @@ function getIdiotHtml() {
       100% { opacity: 1; }
     }
     .box {
-      background: #00ffff;
+      background: rgba(0, 255, 255, 0.85);
       border: 8px dashed #ff0000;
       padding: 30px;
       font-size: 26px;
@@ -428,7 +450,11 @@ function getIdiotHtml() {
   </style>
 </head>
 <body>
-  <marquee behavior="alternate">*** ERROR 404: BRAIN CELL NOT FOUND ***</marquee>
+  <audio autoplay loop id="bg-audio">
+    <source src="/guby.mp3" type="audio/mpeg">
+  </audio>
+
+  <marquee behavior="alternate">*** ERROR 404: YOU ARE A DIPSHIT ***</marquee>
   <h1>YOU ARE AN IDIOT HAHAHAHAHA!!</h1>
   <div class="box">
     <p>WHY WOULD YOU TYPE "67"?! ARE YOU A RETARD??!</p>
@@ -438,6 +464,15 @@ function getIdiotHtml() {
   <p style="font-size: 20px; color: #ffffff; background: #000000; display: inline-block; padding: 10px;">[ CREDITS TO @Mark FOR NOTHING ]</p>
   <br><br>
   <button onclick="window.location.href='/'">CLICK HERE TO GO BACK AND THINK ABOUT WHAT YOU DID</button>
+
+  <script>
+    document.addEventListener('click', function() {
+      var audio = document.getElementById('bg-audio');
+      if (audio && audio.paused) {
+        audio.play();
+      }
+    }, { once: true });
+  </script>
 </body>
 </html>`;
 }
