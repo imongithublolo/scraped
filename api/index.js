@@ -345,11 +345,11 @@ function getIdiotHtml() {
   <marquee behavior="alternate">*** ERROR 404: BRAIN CELL NOT FOUND ***</marquee>
   <h1>YOU ARE AN IDIOT HAHAHAHAHA!!</h1>
   <div class="box">
-    <p>WHY WOULD YOU TYPE "67"?! ARE YOU DUMB?!</p>
+    <p>WHY WOULD YOU TYPE "67"?! ARE YOU SRUPID?!</p>
     <br>
-    <p>CONGRATULATIONS! YOU HAVE UNLOCKED THE UGLIEST PAGE ON THE INTERNET!</p>
+    <p>CONGRATULATIONS! YOU ARE AN ACTUAL FUCKING RETARD</p>
   </div>
-  <p style="font-size: 20px; color: #ffffff; background: #000000; display: inline-block; padding: 10px;">[ BEST VIEWED IN INTERNET EXPLORER 4.0 AT 800x600 RESOLUTION ]</p>
+  <p style="font-size: 20px; color: #ffffff; background: #000000; display: inline-block; padding: 10px;">[ CREDITS TO @Mark FOR NOTHING ]</p>
   <br><br>
   <button onclick="window.location.href='/'">CLICK HERE TO GO BACK AND THINK ABOUT WHAT YOU DID</button>
 </body>
