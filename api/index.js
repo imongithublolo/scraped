@@ -11,7 +11,13 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `${protocol}://${host}`);
     const pathname = url.pathname;
 
-    // 1. Password Verification Endpoint
+    // 1. Handle Ugly 90s Idiot Page Route
+    if (pathname === '/idiot') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).end(getIdiotHtml());
+    }
+
+    // 2. Password Verification Endpoint
     if (req.method === 'POST' && pathname === '/auth_login') {
       let bodyStr = '';
       for await (const chunk of req) {
@@ -23,6 +29,11 @@ module.exports = async (req, res) => {
         password = json.password;
       } catch (e) {}
 
+      if (password === '67') {
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(200).end(JSON.stringify({ redirect: '/idiot' }));
+      }
+
       if (password === PASSWORD) {
         res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
@@ -33,7 +44,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 2. Read Authentication Cookie
+    // 3. Read Authentication Cookie
     const cookies = req.headers.cookie || '';
     const isAuthenticated = cookies.includes(`${AUTH_COOKIE_NAME}=${AUTH_TOKEN}`);
 
@@ -42,16 +53,17 @@ module.exports = async (req, res) => {
       targetPath = '/embed/python';
     }
 
-    // 3. Serve Particles.js Auth Screen if unauthenticated
+    // 4. Check if request is for main HTML page
     const acceptHeader = req.headers.accept || '';
     const isHtmlRequest = acceptHeader.includes('text/html') || targetPath === '/embed/python';
 
+    // Serve Typewriter Particles Auth Screen if unauthenticated HTML request
     if (isHtmlRequest && !isAuthenticated) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(getParticlesAuthHtml());
     }
 
-    // 4. Fetch target directly from OneCompiler
+    // 5. Fetch target directly from OneCompiler
     const targetUrl = `https://onecompiler.com${targetPath}${url.search}`;
     
     const forwardHeaders = {
@@ -83,11 +95,11 @@ module.exports = async (req, res) => {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 5. Inject Blue style for Run button & IMMEDIATELY EXPIRE COOKIE so next refresh requires password again
+    // 6. Inject Blue style for Run button & IMMEDIATELY EXPIRE COOKIE so next refresh prompts password
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
-      // Clear cookie immediately after HTML delivery
+      // Clear cookie immediately after serving main HTML
       res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 
       const blueStyle = `
@@ -129,12 +141,35 @@ function getParticlesAuthHtml() {
   <title>Access</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #000000; color: #ffffff; height: 100vh; overflow: hidden; display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; position: relative; }
+    body { 
+      background: #000000; 
+      color: #ffffff; 
+      height: 100vh; 
+      overflow: hidden; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      font-family: 'Courier New', Courier, monospace; 
+      position: relative; 
+    }
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
     .auth-box { position: relative; z-index: 2; }
-    input { background: #ffffff; border: 2px solid #ffffff; border-radius: 8px; color: #000000; padding: 12px 18px; font-size: 15px; font-weight: 600; outline: none; width: 280px; text-align: center; transition: all 0.2s; box-shadow: 0 0 20px rgba(255, 255, 255, 0.2); }
-    input::placeholder { color: #888888; font-weight: normal; }
-    input:focus { border-color: #0066ff; box-shadow: 0 0 15px rgba(0, 102, 255, 0.6); }
+    input { 
+      background: #000000; 
+      border: 2px solid #ffffff; 
+      border-radius: 4px; 
+      color: #ffffff; 
+      padding: 12px 18px; 
+      font-size: 16px; 
+      font-family: 'Courier New', Courier, monospace; 
+      outline: none; 
+      width: 280px; 
+      text-align: center; 
+      transition: all 0.2s; 
+      box-shadow: 0 0 15px rgba(255, 255, 255, 0.15); 
+    }
+    input::placeholder { color: #666666; font-family: 'Courier New', Courier, monospace; }
+    input:focus { border-color: #ffffff; box-shadow: 0 0 25px rgba(255, 255, 255, 0.6); }
   </style>
 </head>
 <body>
@@ -186,6 +221,10 @@ function getParticlesAuthHtml() {
 
     async function submitAuth() {
       const pass = document.getElementById('pass').value;
+      if (pass === '67') {
+        window.location.href = '/idiot';
+        return;
+      }
       try {
         const res = await fetch('/auth_login', {
           method: 'POST',
@@ -193,6 +232,10 @@ function getParticlesAuthHtml() {
           body: JSON.stringify({ password: pass })
         });
         const data = await res.json();
+        if (data.redirect) {
+          window.location.href = data.redirect;
+          return;
+        }
         if (data.success) {
           window.location.reload();
         } else {
@@ -203,6 +246,81 @@ function getParticlesAuthHtml() {
       } catch (e) {}
     }
   </script>
+</body>
+</html>`;
+}
+
+function getIdiotHtml() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>WARNING: IDIOT DETECTED</title>
+  <style>
+    body {
+      background-color: #ff00ff;
+      color: #00ff00;
+      font-family: "Comic Sans MS", "Comic Sans", cursive, sans-serif;
+      text-align: center;
+      padding: 30px;
+      margin: 0;
+    }
+    h1 {
+      font-size: 55px;
+      color: #ffff00;
+      text-shadow: 5px 5px #ff0000;
+      animation: blink 0.4s infinite;
+      margin-bottom: 20px;
+    }
+    @keyframes blink {
+      0% { opacity: 1; }
+      50% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    .box {
+      background: #00ffff;
+      border: 8px dashed #ff0000;
+      padding: 30px;
+      font-size: 26px;
+      color: #000000;
+      margin: 20px auto;
+      max-width: 600px;
+      font-weight: bold;
+    }
+    marquee {
+      font-size: 32px;
+      background: #0000ff;
+      color: #ffffff;
+      padding: 10px;
+      font-weight: bold;
+      border: 3px solid #ffff00;
+    }
+    button {
+      font-size: 22px;
+      padding: 12px 24px;
+      background: #00ff00;
+      color: #000000;
+      font-family: "Comic Sans MS", cursive;
+      border: 4px outset #ffffff;
+      cursor: pointer;
+      margin-top: 20px;
+      font-weight: bold;
+    }
+    button:hover {
+      background: #ffff00;
+    }
+  </style>
+</head>
+<body>
+  <marquee behavior="alternate">*** ERROR 404: BRAIN CELL NOT FOUND ***</marquee>
+  <h1>YOU ARE AN IDIOT HAHAHAHAHA!!</h1>
+  <div class="box">
+    <p>WHY WOULD YOU TYPE "67"?! ARE YOU DUMB?!</p>
+    <br>
+    <p>CONGRATULATIONS! YOU HAVE UNLOCKED THE UGLIEST PAGE ON THE INTERNET!</p>
+  </div>
+  <p style="font-size: 20px; color: #ffffff; background: #000000; display: inline-block; padding: 10px;">[ BEST VIEWED IN INTERNET EXPLORER 4.0 AT 800x600 RESOLUTION ]</p>
+  <br><br>
+  <button onclick="window.location.href='/'">CLICK HERE TO GO BACK AND THINK ABOUT WHAT YOU DID</button>
 </body>
 </html>`;
 }
