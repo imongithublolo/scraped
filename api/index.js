@@ -24,7 +24,7 @@ module.exports = async (req, res) => {
       } catch (e) {}
 
       if (password === PASSWORD) {
-        res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+        res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ success: true }));
       } else {
@@ -42,13 +42,13 @@ module.exports = async (req, res) => {
       targetPath = '/embed/python';
     }
 
-    // 3. Serve Minimal Pure-Black Password Screen if unauthenticated
+    // 3. Serve Particles.js Auth Screen if unauthenticated
     const acceptHeader = req.headers.accept || '';
     const isHtmlRequest = acceptHeader.includes('text/html') || targetPath === '/embed/python';
 
     if (isHtmlRequest && !isAuthenticated) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(200).end(getMinimalAuthHtml());
+      return res.status(200).end(getParticlesAuthHtml());
     }
 
     // 4. Fetch target directly from OneCompiler
@@ -83,9 +83,12 @@ module.exports = async (req, res) => {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 5. Inject Blue style ONLY for the Run button
+    // 5. Inject Blue style for Run button & IMMEDIATELY EXPIRE COOKIE so next refresh requires password again
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
+
+      // Clear cookie immediately after HTML delivery
+      res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 
       const blueStyle = `
         <style>
@@ -117,7 +120,7 @@ module.exports = async (req, res) => {
   }
 };
 
-function getMinimalAuthHtml() {
+function getParticlesAuthHtml() {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -126,14 +129,61 @@ function getMinimalAuthHtml() {
   <title>Access</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #000000; color: #ffffff; height: 100vh; display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    input { background: #000000; border: 1px solid #222222; border-radius: 6px; color: #ffffff; padding: 12px 16px; font-size: 14px; outline: none; width: 260px; text-align: center; transition: border-color 0.2s; }
-    input:focus { border-color: #0066ff; }
+    body { background: #000000; color: #ffffff; height: 100vh; overflow: hidden; display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; position: relative; }
+    #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
+    .auth-box { position: relative; z-index: 2; }
+    input { background: #ffffff; border: 2px solid #ffffff; border-radius: 8px; color: #000000; padding: 12px 18px; font-size: 15px; font-weight: 600; outline: none; width: 280px; text-align: center; transition: all 0.2s; box-shadow: 0 0 20px rgba(255, 255, 255, 0.2); }
+    input::placeholder { color: #888888; font-weight: normal; }
+    input:focus { border-color: #0066ff; box-shadow: 0 0 15px rgba(0, 102, 255, 0.6); }
   </style>
 </head>
 <body>
-  <input type="password" id="pass" placeholder="Password..." autofocus onkeydown="if(event.key==='Enter') submitAuth()">
+  <div id="particles-js"></div>
+  <div class="auth-box">
+    <input type="password" id="pass" placeholder="Password..." autofocus onkeydown="if(event.key==='Enter') submitAuth()">
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script>
+    particlesJS('particles-js', {
+      particles: {
+        number: { value: 80, density: { enable: true, value_area: 800 } },
+        color: { value: '#ffffff' },
+        shape: { type: 'circle' },
+        opacity: { value: 0.6, random: false },
+        size: { value: 3, random: true },
+        line_linked: {
+          enable: true,
+          distance: 140,
+          color: '#ffffff',
+          opacity: 0.4,
+          width: 1
+        },
+        move: {
+          enable: true,
+          speed: 2,
+          direction: 'none',
+          random: false,
+          straight: false,
+          out_mode: 'out',
+          bounce: false
+        }
+      },
+      interactivity: {
+        detect_on: 'canvas',
+        events: {
+          onhover: { enable: true, mode: 'grab' },
+          onclick: { enable: true, mode: 'push' },
+          resize: true
+        },
+        modes: {
+          grab: { distance: 140, line_linked: { opacity: 0.8 } },
+          push: { particles_nb: 4 }
+        }
+      },
+      retina_detect: true
+    });
+
     async function submitAuth() {
       const pass = document.getElementById('pass').value;
       try {
