@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const PASSWORD = 'MarkX99';
 const AUTH_COOKIE_NAME = 'site_access_token';
@@ -15,6 +17,18 @@ module.exports = async (req, res) => {
     if (pathname === '/idiot') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(getIdiotHtml());
+    }
+
+    // Serve local static assets (opsec.webp and guby.mp3)
+    if (pathname === '/opsec.webp' || pathname === '/guby.mp3') {
+      const filePath = path.join(process.cwd(), pathname);
+      if (fs.existsSync(filePath)) {
+        const ext = path.extname(filePath);
+        const contentType = ext === '.webp' ? 'image/webp' : 'audio/mpeg';
+        res.setHeader('Content-Type', contentType);
+        return res.status(200).end(fs.readFileSync(filePath));
+      }
+      return res.status(404).end('Not found');
     }
 
     // 2. Password Verification Endpoint
@@ -380,15 +394,15 @@ function getIdiotHtml() {
   <title>WARNING: IDIOT DETECTED</title>
   <style>
     body {
-      background: url('opsec.webp') no-repeat center center fixed;
+      background: url('/opsec.webp') no-repeat center center fixed;
       background-size: 100% 100%;
       color: #00ff00;
       font-family: "Comic Sans MS", "Comic Sans", cursive, sans-serif;
       text-align: center;
       padding: 30px;
       margin: 0;
-      height: 100vh;
-      overflow: hidden;
+      min-height: 100vh;
+      overflow-y: auto;
     }
     h1 {
       font-size: 55px;
@@ -437,9 +451,18 @@ function getIdiotHtml() {
   </style>
 </head>
 <body>
-  <audio autoplay loop>
-    <source src="guby.mp3" type="audio/mpeg">
+  <audio id="bg-audio" autoplay loop>
+    <source src="/guby.mp3" type="audio/mpeg">
   </audio>
+  <script>
+    // Fallback if browser blocks autoplay
+    document.addEventListener('click', () => {
+      const audio = document.getElementById('bg-audio');
+      if (audio.paused) {
+        audio.play().catch(e => {});
+      }
+    }, { once: true });
+  </script>
   <marquee behavior="alternate">*** ERROR 404: BRAIN CELL NOT FOUND ***</marquee>
   <h1>YOU ARE AN IDIOT HAHAHAHAHA!!</h1>
   <div class="box">
