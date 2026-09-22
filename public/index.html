@@ -1,28 +1,142 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charSet="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="stylesheet" href="/_next/static/css/00671e651da1e42c.css" data-precedence="next"/>
-  <link rel="stylesheet" href="/_next/static/css/3a2ae30a837abcaf.css" data-precedence="next"/>
-  <script src="/_next/static/chunks/webpack-ca99c106727c0fc4.js" async=""></script>
-  <script src="/_next/static/chunks/4bd1b696-bad92808725a934a.js" async=""></script>
-  <script src="/_next/static/chunks/31255-2e48f83e850421e0.js" async=""></script>
-  <script src="/_next/static/chunks/main-app-f9dabb50c7fbec6f.js" async=""></script>
-  <script src="/_next/static/chunks/1213-28bbfada765fedce.js" async=""></script>
-  <script src="/_next/static/chunks/44517-e701fd75582b7046.js" async=""></script>
-  <script src="/_next/static/chunks/15168-cbe787815caa2028.js" async=""></script>
-  <script src="/_next/static/chunks/72711-e6b5a0204ec65cf5.js" async=""></script>
-  <script src="/_next/static/chunks/app/layout-0cdaf62154643e4d.js" async=""></script>
-  <script src="/_next/static/chunks/app/embed/layout-00759915ccf183e0.js" async=""></script>
-  <script src="/_next/static/chunks/24677-20de83a27e7d143e.js" async=""></script>
-  <script src="/_next/static/chunks/88605-4a64e6fe10ab8ff1.js" async=""></script>
-  <script src="/_next/static/chunks/app/embed/[language]/[[...slug]]/page-e74ada8a4c732b07.js" async=""></script>
-  <script async="" src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.7.0/highlight.min.js"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.7.0/styles/github.min.css"/>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OneCompiler Python Workspace</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/vscode-assets/editor/editor.main.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    
+    .toolbar { height: 44px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+    .lang-title { font-size: 14px; font-weight: 600; color: #58a6ff; display: flex; align-items: center; gap: 8px; }
+    .btn-run { background: #238636; color: #ffffff; border: none; padding: 6px 18px; font-size: 13px; font-weight: 600; border-radius: 6px; cursor: pointer; transition: 0.2s; }
+    .btn-run:hover { background: #2ea043; }
+    .btn-run:disabled { background: #343942; color: #484f58; cursor: not-allowed; }
+
+    .main-layout { flex: 1; display: flex; flex-direction: column; height: calc(100vh - 44px); }
+    #editor-container { flex: 1; min-height: 50%; }
+    
+    .bottom-panel { height: 40%; background: #090d16; border-top: 1px solid #30363d; display: flex; flex-direction: column; }
+    .panel-tabs { background: #161b22; display: flex; border-bottom: 1px solid #21262d; }
+    .tab { padding: 8px 16px; font-size: 12px; font-weight: bold; color: #8b949e; cursor: pointer; border-right: 1px solid #21262d; text-transform: uppercase; }
+    .tab.active { color: #58a6ff; background: #0d1117; border-bottom: 2px solid #58a6ff; }
+    
+    .panel-content { flex: 1; position: relative; }
+    #console-output, #stdin-input { width: 100%; height: 100%; padding: 12px; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; line-height: 1.5; border: none; outline: none; background: transparent; color: #7ee787; box-sizing: border-box; }
+    #stdin-input { color: #c9d1d9; resize: none; display: none; }
+    #console-output { white-space: pre-wrap; overflow-y: auto; margin: 0; }
+    #console-output.error { color: #f85149; }
+  </style>
 </head>
 <body>
-  <div id="_rht_toaster" style="position:fixed;z-index:9999;top:16px;left:16px;right:16px;bottom:16px;pointer-events:none"></div>
-  <div id="app"></div>
+
+  <div class="toolbar">
+    <div class="lang-title">⚡ Python 3</div>
+    <button id="run-btn" class="btn-run" onclick="runCode()">Run</button>
+  </div>
+
+  <div class="main-layout">
+    <div id="editor-container"></div>
+    <div class="bottom-panel">
+      <div class="panel-tabs">
+        <div id="tab-output" class="tab active" onclick="switchTab('output')">Output</div>
+        <div id="tab-stdin" class="tab" onclick="switchTab('stdin')">Inputs (stdin)</div>
+      </div>
+      <div class="panel-content">
+        <pre id="console-output">Press "Run" to execute python code...</pre>
+        <textarea id="stdin-input" placeholder="Enter standard inputs here (one per line)..."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.js"></script>
+  <script>
+    let monacoEditor;
+
+    require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }});
+    require(['vs/editor/editor.main'], function() {
+      monacoEditor = monaco.editor.create(document.getElementById('editor-container'), {
+        value: '# OneCompiler Python Execution Environment\nimport sys\n\nprint("Hello World from Python!")\nprint("Python Version:", sys.version)\n',
+        language: 'python',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        fontSize: 14,
+        minimap: { enabled: false }
+      });
+    });
+
+    function switchTab(tab) {
+      const outputEl = document.getElementById('console-output');
+      const stdinEl = document.getElementById('stdin-input');
+      const tabOutput = document.getElementById('tab-output');
+      const tabStdin = document.getElementById('tab-stdin');
+
+      if (tab === 'output') {
+        outputEl.style.display = 'block';
+        stdinEl.style.display = 'none';
+        tabOutput.classList.add('active');
+        tabStdin.classList.remove('active');
+      } else {
+        outputEl.style.display = 'none';
+        stdinEl.style.display = 'block';
+        tabStdin.classList.add('active');
+        tabOutput.classList.remove('active');
+      }
+    }
+
+    async function runCode() {
+      const runBtn = document.getElementById('run-btn');
+      const output = document.getElementById('console-output');
+      const stdin = document.getElementById('stdin-input').value;
+      
+      switchTab('output');
+      runBtn.disabled = true;
+      runBtn.innerText = "Running...";
+      output.classList.remove('error');
+      output.innerText = "Executing code...";
+
+      try {
+        const response = await fetch('/api/v1/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: "Python 3",
+            title: "Python 3",
+            version: "latest",
+            language: "python",
+            stdin: stdin,
+            files: [
+              {
+                name: "main.py",
+                content: monacoEditor.getValue()
+              }
+            ]
+          })
+        });
+
+        const data = await response.json();
+
+        if (data.stdout !== undefined || data.stderr !== undefined || data.exception !== undefined) {
+          if (data.stderr || data.exception) {
+            output.classList.add('error');
+            output.innerText = data.stderr || data.exception;
+          } else {
+            output.innerText = data.stdout || "Program executed successfully with no output.";
+          }
+        } else {
+          output.classList.add('error');
+          output.innerText = "Unexpected API Response:\n" + JSON.stringify(data, null, 2);
+        }
+      } catch (err) {
+        output.classList.add('error');
+        output.innerText = "Connection Error: " + err.message;
+      } finally {
+        runBtn.disabled = false;
+        runBtn.innerText = "Run";
+      }
+    }
+  </script>
 </body>
 </html>
