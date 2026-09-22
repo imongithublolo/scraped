@@ -17,12 +17,6 @@ module.exports = async (req, res) => {
       return res.status(200).end(getIdiotHtml());
     }
 
-    // 1.5 Handle Guby Route
-    if (pathname === '/guby') {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(200).end(getGubyHtml());
-    }
-
     // 2. Password Verification Endpoint
     if (req.method === 'POST' && pathname === '/auth_login') {
       let bodyStr = '';
@@ -335,10 +329,7 @@ function getParticlesAuthHtml() {
       interactivity: {
         detect_on: 'canvas',
         events: {
-          onhover: { 
-            enable: true, 
-            mode: 'repulse'
-          },
+          onhover: { enable: true, mode: 'repulse' },
           onclick: { enable: true, mode: 'push' },
           resize: true
         },
@@ -355,10 +346,6 @@ function getParticlesAuthHtml() {
       const pass = document.getElementById('pass').value;
       if (pass === '67') {
         window.location.href = '/idiot';
-        return;
-      }
-      if (pass === 'guby') {
-        window.location.href = '/guby';
         return;
       }
       try {
@@ -457,57 +444,6 @@ function getIdiotHtml() {
   <p style="font-size: 20px; color: #ffffff; background: #000000; display: inline-block; padding: 10px;">[ CREDITS TO @Mark FOR NOTHING ]</p>
   <br><br>
   <button onclick="window.location.href='/'">CLICK HERE TO GO BACK AND THINK ABOUT WHAT YOU DID</button>
-</body>
-</html>`;
-}
-
-function getGubyHtml() {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <title>Guby Opsec</title>
-  <style>
-    body {
-      background: #111;
-      color: #0f0;
-      font-family: monospace;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-    }
-    img {
-      max-width: 400px;
-      border: 4px solid #0f0;
-      box-shadow: 0 0 20px #0f0;
-      margin-bottom: 20px;
-    }
-    h1 {
-      margin-bottom: 10px;
-    }
-    button {
-      background: #000;
-      color: #0f0;
-      border: 2px solid #0f0;
-      padding: 10px 20px;
-      font-family: monospace;
-      font-size: 16px;
-      cursor: pointer;
-      margin-top: 15px;
-    }
-    button:hover {
-      background: #0f0;
-      color: #000;
-    }
-  </style>
-</head>
-<body>
-  <h1>GUBY OPSEC ENGAGED</h1>
-  <img src="https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3l2ajgwdDZ3aGJrczRrbHN3bnBwMmZqZnM4NHB1MXI2dGJ6OHY3MyZlcD12MV9pbnFfaXnaWRzJmcyPW51_Y2lkPTc5MGI3NjEx.../giphy.gif" alt="Guby Opsec">
-  <p>Maximum security active. Nothing to see here.</p>
-  <button onclick="window.location.href='/'">Return</button>
 </body>
 </html>`;
 }
