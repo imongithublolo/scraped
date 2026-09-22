@@ -57,7 +57,6 @@ module.exports = async (req, res) => {
     const acceptHeader = req.headers.accept || '';
     const isHtmlRequest = acceptHeader.includes('text/html') || targetPath === '/embed/python';
 
-    // Serve Typewriter Particles Auth Screen if unauthenticated HTML request
     if (isHtmlRequest && !isAuthenticated) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(getParticlesAuthHtml());
@@ -95,14 +94,14 @@ module.exports = async (req, res) => {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 6. Inject Blue style for Run button & IMMEDIATELY EXPIRE COOKIE so next refresh prompts password
+    // 6. Inject Blue Run Button + Auto-Save / Auto-Restore Script
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
-      // Clear cookie immediately after serving main HTML
+      // Clear cookie immediately so next refresh demands password again
       res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 
-      const blueStyle = `
+      const injectedPayload = `
         <style>
           button[class*="run"], button[class*="Run"], .run-button {
             background-color: #0066ff !important;
@@ -115,8 +114,40 @@ module.exports = async (req, res) => {
             background: #0052cc !important;
           }
         </style>
+        <script>
+          (function() {
+            // Auto-save & restore code using LocalStorage
+            function setupAutoSave() {
+              const pollInterval = setInterval(() => {
+                if (window.monaco && window.monaco.editor) {
+                  const editors = window.monaco.editor.getEditors();
+                  if (editors.length > 0) {
+                    const editor = editors[0];
+
+                    // Restore saved code
+                    const savedCode = localStorage.getItem('oc_saved_code');
+                    if (savedCode && editor.getValue() !== savedCode) {
+                      editor.setValue(savedCode);
+                    }
+
+                    // Save code on every keystroke
+                    editor.onDidChangeModelContent(() => {
+                      localStorage.setItem('oc_saved_code', editor.getValue());
+                    });
+
+                    clearInterval(pollInterval);
+                  }
+                }
+              }, 300);
+            }
+
+            if (document.readyState === 'complete') setupAutoSave();
+            else window.addEventListener('load', setupAutoSave);
+          })();
+        </script>
       `;
-      html = html.replace('</head>', `${blueStyle}</head>`);
+
+      html = html.replace('</head>', `${injectedPayload}</head>`);
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(targetRes.status).end(html);
