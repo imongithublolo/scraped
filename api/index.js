@@ -94,7 +94,7 @@ module.exports = async (req, res) => {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 6. Inject Blue Run Button + Auto-Save / Auto-Restore Script
+    // 6. Inject Blue Run Button + Robust Auto-Save / Auto-Restore Script
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
@@ -116,33 +116,66 @@ module.exports = async (req, res) => {
         </style>
         <script>
           (function() {
-            // Auto-save & restore code using LocalStorage
-            function setupAutoSave() {
+            let isRestored = false;
+
+            function initAutoSave() {
               const pollInterval = setInterval(() => {
                 if (window.monaco && window.monaco.editor) {
                   const editors = window.monaco.editor.getEditors();
                   if (editors.length > 0) {
                     const editor = editors[0];
-
-                    // Restore saved code
                     const savedCode = localStorage.getItem('oc_saved_code');
-                    if (savedCode && editor.getValue() !== savedCode) {
+
+                    // 1. Restore code if present
+                    if (savedCode && savedCode.trim() !== '' && !isRestored) {
                       editor.setValue(savedCode);
+                      isRestored = true;
                     }
 
-                    // Save code on every keystroke
+                    // 2. Continuous save on model change
                     editor.onDidChangeModelContent(() => {
-                      localStorage.setItem('oc_saved_code', editor.getValue());
+                      const currentVal = editor.getValue();
+                      if (currentVal.trim() !== '') {
+                        localStorage.setItem('oc_saved_code', currentVal);
+                      }
                     });
+
+                    // 3. Keep reinforcing restored code against React re-render resets for 3 seconds
+                    let protectCount = 0;
+                    const protectInterval = setInterval(() => {
+                      protectCount++;
+                      const currentVal = editor.getValue();
+                      if (savedCode && savedCode.trim() !== '' && currentVal !== savedCode && protectCount < 10) {
+                        editor.setValue(savedCode);
+                      }
+                      if (protectCount >= 10) {
+                        clearInterval(protectInterval);
+                      }
+                    }, 300);
+
+                    // 4. Auto-save STDIN input text
+                    setInterval(() => {
+                      const stdinEl = document.querySelector('textarea, input[placeholder*="Input"]');
+                      if (stdinEl) {
+                        const savedStdin = localStorage.getItem('oc_saved_stdin');
+                        if (savedStdin && !stdinEl.dataset.restored) {
+                          stdinEl.value = savedStdin;
+                          stdinEl.dataset.restored = "true";
+                        }
+                        stdinEl.addEventListener('input', () => {
+                          localStorage.setItem('oc_saved_stdin', stdinEl.value);
+                        });
+                      }
+                    }, 500);
 
                     clearInterval(pollInterval);
                   }
                 }
-              }, 300);
+              }, 200);
             }
 
-            if (document.readyState === 'complete') setupAutoSave();
-            else window.addEventListener('load', setupAutoSave);
+            if (document.readyState === 'complete') initAutoSave();
+            else window.addEventListener('load', initAutoSave);
           })();
         </script>
       `;
@@ -345,9 +378,9 @@ function getIdiotHtml() {
   <marquee behavior="alternate">*** ERROR 404: BRAIN CELL NOT FOUND ***</marquee>
   <h1>YOU ARE AN IDIOT HAHAHAHAHA!!</h1>
   <div class="box">
-    <p>WHY WOULD YOU TYPE "67"?! ARE YOU SRUPID?!</p>
+    <p>WHY WOULD YOU TYPE "67"?! ARE YOU STUPID?!</p>
     <br>
-    <p>CONGRATULATIONS! YOU ARE AN ACTUAL FUCKING RETARD</p>
+    <p>CONGRATULATIONS! YOU UNLOCKED THIS PAGE</p>
   </div>
   <p style="font-size: 20px; color: #ffffff; background: #000000; display: inline-block; padding: 10px;">[ CREDITS TO @Mark FOR NOTHING ]</p>
   <br><br>
