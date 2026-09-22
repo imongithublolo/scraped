@@ -6,11 +6,12 @@ const proxy = createProxyMiddleware({
   headers: {
     'Referer': 'https://onecompiler.com/embed/python',
     'Origin': 'https://onecompiler.com',
-    'User-Agent': 'Mozilla/5.0'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
   },
   onProxyRes: function (proxyRes) {
     delete proxyRes.headers['access-control-allow-origin'];
     proxyRes.headers['Access-Control-Allow-Origin'] = '*';
+    proxyRes.headers['Access-Control-Allow-Headers'] = '*';
   }
 });
 
