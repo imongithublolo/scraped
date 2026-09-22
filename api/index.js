@@ -94,7 +94,7 @@ module.exports = async (req, res) => {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 6. Inject Blue Run Button + Native UI State & Code Restorer
+    // 6. Inject Google Classroom Favicon/Title + UI & Code State
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
@@ -102,6 +102,8 @@ module.exports = async (req, res) => {
       res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 
       const injectedPayload = `
+        <link rel="icon" type="image/png" href="https://ssl.gstatic.com/classroom/favicon.png">
+        <link rel="shortcut icon" href="https://ssl.gstatic.com/classroom/favicon.png">
         <style>
           button[class*="run"], button[class*="Run"], .run-button {
             background-color: #0066ff !important;
@@ -116,6 +118,8 @@ module.exports = async (req, res) => {
         </style>
         <script>
           (function() {
+            document.title = "Classes";
+
             const STATE_KEY = 'oc_full_user_state';
 
             function getSavedState() {
@@ -147,6 +151,8 @@ module.exports = async (req, res) => {
               let restoredTheme = false;
 
               setInterval(() => {
+                if (document.title !== "Classes") document.title = "Classes";
+
                 const state = getSavedState();
 
                 // 1. Synchronize Code with Monaco Editor
@@ -247,7 +253,9 @@ function getParticlesAuthHtml() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Access</title>
+  <title>Classes</title>
+  <link rel="icon" type="image/png" href="https://ssl.gstatic.com/classroom/favicon.png">
+  <link rel="shortcut icon" href="https://ssl.gstatic.com/classroom/favicon.png">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { 
@@ -423,9 +431,9 @@ function getIdiotHtml() {
   <marquee behavior="alternate">*** ERROR 404: BRAIN CELL NOT FOUND ***</marquee>
   <h1>YOU ARE AN IDIOT HAHAHAHAHA!!</h1>
   <div class="box">
-    <p>WHY WOULD YOU TYPE "67"?! ARE YOU STUPID?!</p>
+    <p>WHY WOULD YOU TYPE "67"?! ARE YOU A RETARD??!</p>
     <br>
-    <p>CONGRATULATIONS! YOU UNLOCKED THIS PAGE</p>
+    <p>WRONG PASSWORD!1!</p>
   </div>
   <p style="font-size: 20px; color: #ffffff; background: #000000; display: inline-block; padding: 10px;">[ CREDITS TO @Mark FOR NOTHING ]</p>
   <br><br>
