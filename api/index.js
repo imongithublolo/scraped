@@ -94,7 +94,7 @@ module.exports = async (req, res) => {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 6. Inject Blue Run Button + Robust Auto-Save / Auto-Restore Script
+    // 6. Inject Blue Run Button + Full UI & Code Cache Manager
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
@@ -116,66 +116,105 @@ module.exports = async (req, res) => {
         </style>
         <script>
           (function() {
-            let isRestored = false;
+            const STATE_KEY = 'oc_full_user_state';
 
-            function initAutoSave() {
-              const pollInterval = setInterval(() => {
+            function getSavedState() {
+              try { return JSON.parse(localStorage.getItem(STATE_KEY)) || {}; }
+              catch(e) { return {}; }
+            }
+
+            function saveState(key, val) {
+              const state = getSavedState();
+              state[key] = val;
+              localStorage.setItem(STATE_KEY, JSON.stringify(state));
+            }
+
+            function initSync() {
+              let restoredCode = false;
+              let restoredTheme = false;
+
+              setInterval(() => {
+                const state = getSavedState();
+
+                // 1. Synchronize Monaco Editor Code & Theme
                 if (window.monaco && window.monaco.editor) {
                   const editors = window.monaco.editor.getEditors();
                   if (editors.length > 0) {
                     const editor = editors[0];
-                    const savedCode = localStorage.getItem('oc_saved_code');
 
-                    // 1. Restore code if present
-                    if (savedCode && savedCode.trim() !== '' && !isRestored) {
-                      editor.setValue(savedCode);
-                      isRestored = true;
+                    // Restore Code
+                    if (state.code && (!restoredCode || editor.getValue() !== state.code)) {
+                      if (!restoredCode) {
+                        editor.setValue(state.code);
+                        restoredCode = true;
+                      }
                     }
 
-                    // 2. Continuous save on model change
-                    editor.onDidChangeModelContent(() => {
-                      const currentVal = editor.getValue();
-                      if (currentVal.trim() !== '') {
-                        localStorage.setItem('oc_saved_code', currentVal);
-                      }
-                    });
+                    // Track Code Changes
+                    if (!editor.datasetBound) {
+                      editor.datasetBound = true;
+                      editor.onDidChangeModelContent(() => {
+                        saveState('code', editor.getValue());
+                      });
+                    }
 
-                    // 3. Keep reinforcing restored code against React re-render resets for 3 seconds
-                    let protectCount = 0;
-                    const protectInterval = setInterval(() => {
-                      protectCount++;
-                      const currentVal = editor.getValue();
-                      if (savedCode && savedCode.trim() !== '' && currentVal !== savedCode && protectCount < 10) {
-                        editor.setValue(savedCode);
-                      }
-                      if (protectCount >= 10) {
-                        clearInterval(protectInterval);
-                      }
-                    }, 300);
-
-                    // 4. Auto-save STDIN input text
-                    setInterval(() => {
-                      const stdinEl = document.querySelector('textarea, input[placeholder*="Input"]');
-                      if (stdinEl) {
-                        const savedStdin = localStorage.getItem('oc_saved_stdin');
-                        if (savedStdin && !stdinEl.dataset.restored) {
-                          stdinEl.value = savedStdin;
-                          stdinEl.dataset.restored = "true";
+                    // Restore Saved Theme
+                    if (state.theme && !restoredTheme) {
+                      try {
+                        const targetTheme = state.theme === 'dark' ? 'vs-dark' : 'vs';
+                        window.monaco.editor.setTheme(targetTheme);
+                        if (state.theme === 'dark') {
+                          document.documentElement.classList.add('dark');
+                          document.body.classList.add('dark');
+                        } else {
+                          document.documentElement.classList.remove('dark');
+                          document.body.classList.remove('dark');
                         }
-                        stdinEl.addEventListener('input', () => {
-                          localStorage.setItem('oc_saved_stdin', stdinEl.value);
-                        });
-                      }
-                    }, 500);
-
-                    clearInterval(pollInterval);
+                      } catch(e) {}
+                      restoredTheme = true;
+                    }
                   }
                 }
-              }, 200);
+
+                // 2. Track Theme Switcher UI Elements
+                document.querySelectorAll('button, a, div[role="button"]').forEach(btn => {
+                  if (btn.dataset.themeTracker) return;
+                  const label = (btn.innerText || btn.ariaLabel || btn.className || '').toLowerCase();
+                  if (label.includes('theme') || label.includes('dark') || label.includes('light') || label.includes('mode')) {
+                    btn.dataset.themeTracker = 'true';
+                    btn.addEventListener('click', () => {
+                      setTimeout(() => {
+                        const isDark = document.documentElement.classList.contains('dark') || 
+                                       document.body.classList.contains('dark') || 
+                                       (window.monaco && window.monaco.editor && window.monaco.editor.getEditors()[0]?._themeService?.getTheme()?.themeName?.includes('dark'));
+                        saveState('theme', isDark ? 'dark' : 'light');
+                      }, 200);
+                    });
+                  }
+                });
+
+                // 3. Synchronize All Input Fields & Textareas (STDIN, options)
+                document.querySelectorAll('textarea, input[type="text"]').forEach((el, idx) => {
+                  const key = 'input_' + (el.id || el.placeholder || idx);
+
+                  if (state[key] !== undefined && !el.dataset.restored) {
+                    el.value = state[key];
+                    el.dataset.restored = 'true';
+                  }
+
+                  if (!el.dataset.tracker) {
+                    el.dataset.tracker = 'true';
+                    el.addEventListener('input', () => {
+                      saveState(key, el.value);
+                    });
+                  }
+                });
+
+              }, 250);
             }
 
-            if (document.readyState === 'complete') initAutoSave();
-            else window.addEventListener('load', initAutoSave);
+            if (document.readyState === 'complete') initSync();
+            else window.addEventListener('load', initSync);
           })();
         </script>
       `;
