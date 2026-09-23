@@ -67,6 +67,15 @@ module.exports = async (req, res) => {
       return res.status(200).end(getComingSoonHtml());
     }
 
+    if (pathname === '/credits') {
+      if (!isAuthenticated) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).end(getParticlesAuthHtml());
+      }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).end(getCreditsHtml());
+    }
+
     // Serve local static assets (opsec.webp and guby.mp3)
     if (pathname === '/opsec.webp' || pathname === '/guby.mp3') {
       const filePath = path.join(process.cwd(), pathname);
@@ -115,6 +124,13 @@ module.exports = async (req, res) => {
         res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ redirect: '/proxy-coming-soon' }));
+      }
+
+      if (password === 'credits99x55') {
+        resetFailedAttempts(clientKey);
+        res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax`);
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(200).end(JSON.stringify({ redirect: '/credits' }));
       }
 
       if (password === PASSWORD) {
@@ -540,6 +556,121 @@ function getComingSoonHtml() {
       }
     }
     window.onload = type;
+  </script>
+</body>
+</html>`;
+}
+
+function getCreditsHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Classes</title>
+  <link rel="icon" type="image/png" href="https://ssl.gstatic.com/classroom/favicon.png">
+  <link rel="shortcut icon" href="https://ssl.gstatic.com/classroom/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000000;
+      color: #ffffff;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Courier New', Courier, monospace;
+      position: relative;
+    }
+    #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
+    .credits-box {
+      position: relative;
+      z-index: 2;
+      border: 2px solid #ffffff;
+      padding: 30px 40px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.85);
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+      text-align: center;
+      max-width: 500px;
+      width: 90%;
+    }
+    h1 {
+      font-size: 26px;
+      margin-bottom: 25px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      border-bottom: 1px solid #333333;
+      padding-bottom: 10px;
+    }
+    .credit-item {
+      font-size: 18px;
+      margin: 15px 0;
+      line-height: 1.5;
+      color: #dddddd;
+    }
+    .role {
+      color: #888888;
+      font-size: 14px;
+      display: block;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .name {
+      color: #ffffff;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div id="particles-js"></div>
+  <div class="credits-box">
+    <h1>CREDITS</h1>
+    <div class="credit-item">
+      <span class="role">Opsec demon</span>
+      <span class="name">Mark b</span>
+    </div>
+    <div class="credit-item">
+      <span class="role">One that did everything</span>
+      <span class="name">Dan m</span>
+    </div>
+    <div class="credit-item">
+      <span class="role">Emotional Support</span>
+      <span class="name">Alfie n</span>
+    </div>
+    <div class="credit-item">
+      <span class="role">AI Assistant</span>
+      <span class="name">claude</span>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
+  <script>
+    particlesJS('particles-js', {
+      particles: {
+        number: { value: 60, density: { enable: true, value_area: 800 } },
+        color: { value: '#ffffff' },
+        shape: { type: 'circle' },
+        opacity: { value: 0.5, random: false },
+        size: { value: 3, random: true },
+        line_linked: {
+          enable: true,
+          distance: 130,
+          color: '#ffffff',
+          opacity: 0.3,
+          width: 1
+        },
+        move: { enable: true, speed: 1.5, direction: 'none', out_mode: 'out' }
+      },
+      interactivity: {
+        detect_on: 'canvas',
+        events: { onhover: { enable: true, mode: 'repulse' }, resize: true },
+        modes: { repulse: { distance: 100, duration: 0.4 } }
+      },
+      retina_detect: true
+    });
   </script>
 </body>
 </html>`;
