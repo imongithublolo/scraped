@@ -49,6 +49,9 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `${protocol}://${host}`);
     const pathname = url.pathname;
 
+    const cookies = req.headers.cookie || '';
+    const isAuthenticated = cookies.includes(`${AUTH_COOKIE_NAME}=${AUTH_TOKEN}`);
+
     // 1. Handle Special Routes
     if (pathname === '/idiot') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -56,6 +59,10 @@ module.exports = async (req, res) => {
     }
 
     if (pathname === '/proxy-coming-soon') {
+      if (!isAuthenticated) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).end(getParticlesAuthHtml());
+      }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(getComingSoonHtml());
     }
@@ -75,7 +82,6 @@ module.exports = async (req, res) => {
     // 2. Password Verification Endpoint with Rate Limiting
     if (req.method === 'POST' && pathname === '/auth_login') {
       const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown_ip';
-      const cookies = req.headers.cookie || '';
       const clientKey = `${clientIp}_${cookies}`;
 
       const { isBlocked, remainingMs } = checkRateLimit(clientKey);
@@ -106,6 +112,7 @@ module.exports = async (req, res) => {
 
       if (password === '310554') {
         resetFailedAttempts(clientKey);
+        res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ redirect: '/proxy-coming-soon' }));
       }
@@ -129,16 +136,12 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 3. Read Authentication Cookie
-    const cookies = req.headers.cookie || '';
-    const isAuthenticated = cookies.includes(`${AUTH_COOKIE_NAME}=${AUTH_TOKEN}`);
-
     let targetPath = pathname;
     if (targetPath === '/' || targetPath === '/index.html') {
       targetPath = '/embed/python';
     }
 
-    // 4. Check if request is for main HTML page
+    // 3. Check if request is for main HTML page
     const acceptHeader = req.headers.accept || '';
     const isHtmlRequest = acceptHeader.includes('text/html') || targetPath === '/embed/python';
 
@@ -147,7 +150,7 @@ module.exports = async (req, res) => {
       return res.status(200).end(getParticlesAuthHtml());
     }
 
-    // 5. Fetch target directly from OneCompiler
+    // 4. Fetch target directly from OneCompiler
     const targetUrl = `https://onecompiler.com${targetPath}${url.search}`;
     
     const forwardHeaders = {
@@ -179,7 +182,7 @@ module.exports = async (req, res) => {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // 6. Inject Google Classroom Favicon/Title + UI & Code State
+    // 5. Inject Google Classroom Favicon/Title + UI & Code State
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
@@ -431,10 +434,6 @@ function getParticlesAuthHtml() {
       const pass = document.getElementById('pass').value;
       if (pass === '67') {
         window.location.href = '/idiot';
-        return;
-      }
-      if (pass === '310554') {
-        window.location.href = '/proxy-coming-soon';
         return;
       }
       try {
