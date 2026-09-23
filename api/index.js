@@ -6,6 +6,42 @@ const PASSWORD = 'MarkX99';
 const AUTH_COOKIE_NAME = 'site_access_token';
 const AUTH_TOKEN = crypto.createHash('sha256').update(PASSWORD + '_secret_salt').digest('hex');
 
+// In-memory rate limiting store: key -> { failures: number, blockedUntil: number }
+const rateLimitMap = new Map();
+
+function checkRateLimit(key) {
+  const now = Date.now();
+  const record = rateLimitMap.get(key);
+
+  if (!record) return { isBlocked: false, remainingMs: 0 };
+
+  if (record.blockedUntil > now) {
+    return { isBlocked: true, remainingMs: record.blockedUntil - now };
+  }
+
+  return { isBlocked: false, remainingMs: 0 };
+}
+
+function registerFailedAttempt(key) {
+  const now = Date.now();
+  let record = rateLimitMap.get(key) || { failures: 0, blockedUntil: 0 };
+
+  record.failures += 1;
+
+  if (record.failures >= 5) {
+    const extraFailures = record.failures - 5;
+    const durationSeconds = 5 * Math.pow(2, extraFailures);
+    record.blockedUntil = now + (durationSeconds * 1000);
+  }
+
+  rateLimitMap.set(key, record);
+  return record;
+}
+
+function resetFailedAttempts(key) {
+  rateLimitMap.delete(key);
+}
+
 module.exports = async (req, res) => {
   try {
     const host = req.headers.host || 'localhost';
@@ -13,10 +49,15 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `${protocol}://${host}`);
     const pathname = url.pathname;
 
-    // 1. Handle Ugly 90s Idiot Page Route
+    // 1. Handle Special Routes
     if (pathname === '/idiot') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(getIdiotHtml());
+    }
+
+    if (pathname === '/proxy-coming-soon') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).end(getComingSoonHtml());
     }
 
     // Serve local static assets (opsec.webp and guby.mp3)
@@ -31,8 +72,22 @@ module.exports = async (req, res) => {
       return res.status(404).end('Not found');
     }
 
-    // 2. Password Verification Endpoint
+    // 2. Password Verification Endpoint with Rate Limiting
     if (req.method === 'POST' && pathname === '/auth_login') {
+      const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown_ip';
+      const cookies = req.headers.cookie || '';
+      const clientKey = `${clientIp}_${cookies}`;
+
+      const { isBlocked, remainingMs } = checkRateLimit(clientKey);
+      if (isBlocked) {
+        const waitSec = Math.ceil(remainingMs / 1000);
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(429).end(JSON.stringify({ 
+          success: false, 
+          message: `Too many failed attempts. Try again in ${waitSec} second(s).` 
+        }));
+      }
+
       let bodyStr = '';
       for await (const chunk of req) {
         bodyStr += chunk;
@@ -44,17 +99,33 @@ module.exports = async (req, res) => {
       } catch (e) {}
 
       if (password === '67') {
+        resetFailedAttempts(clientKey);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ redirect: '/idiot' }));
       }
 
+      if (password === '310554') {
+        resetFailedAttempts(clientKey);
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(200).end(JSON.stringify({ redirect: '/proxy-coming-soon' }));
+      }
+
       if (password === PASSWORD) {
+        resetFailedAttempts(clientKey);
         res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${AUTH_TOKEN}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ success: true }));
       } else {
+        const record = registerFailedAttempt(clientKey);
+        const newlyBlocked = record.blockedUntil > Date.now();
+        const waitSec = newlyBlocked ? Math.ceil((record.blockedUntil - Date.now()) / 1000) : 0;
+
         res.setHeader('Content-Type', 'application/json');
-        return res.status(401).end(JSON.stringify({ success: false }));
+        return res.status(401).end(JSON.stringify({ 
+          success: false,
+          blocked: newlyBlocked,
+          message: newlyBlocked ? `Too many wrong attempts! Blocked for ${waitSec}s.` : 'Wrong password'
+        }));
       }
     }
 
@@ -362,6 +433,10 @@ function getParticlesAuthHtml() {
         window.location.href = '/idiot';
         return;
       }
+      if (pass === '310554') {
+        window.location.href = '/proxy-coming-soon';
+        return;
+      }
       try {
         const res = await fetch('/auth_login', {
           method: 'POST',
@@ -378,10 +453,94 @@ function getParticlesAuthHtml() {
         } else {
           const el = document.getElementById('pass');
           el.value = '';
-          el.placeholder = 'Wrong Password';
+          el.placeholder = data.message || 'Wrong Password';
         }
       } catch (e) {}
     }
+  </script>
+</body>
+</html>`;
+}
+
+function getComingSoonHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Classes</title>
+  <link rel="icon" type="image/png" href="https://ssl.gstatic.com/classroom/favicon.png">
+  <link rel="shortcut icon" href="https://ssl.gstatic.com/classroom/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000000;
+      color: #ffffff;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Courier New', Courier, monospace;
+      position: relative;
+    }
+    #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
+    .text-box {
+      position: relative;
+      z-index: 2;
+      font-size: 28px;
+      letter-spacing: 2px;
+      white-space: nowrap;
+      border-right: 3px solid #ffffff;
+      padding-right: 5px;
+      animation: blink 0.75s step-end infinite;
+    }
+    @keyframes blink {
+      from, to { border-color: transparent }
+      50% { border-color: #ffffff; }
+    }
+  </style>
+</head>
+<body>
+  <div id="particles-js"></div>
+  <div class="text-box" id="typewriter"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
+  <script>
+    particlesJS('particles-js', {
+      particles: {
+        number: { value: 60, density: { enable: true, value_area: 800 } },
+        color: { value: '#ffffff' },
+        shape: { type: 'circle' },
+        opacity: { value: 0.5, random: false },
+        size: { value: 3, random: true },
+        line_linked: {
+          enable: true,
+          distance: 130,
+          color: '#ffffff',
+          opacity: 0.3,
+          width: 1
+        },
+        move: { enable: true, speed: 1.5, direction: 'none', out_mode: 'out' }
+      },
+      interactivity: {
+        detect_on: 'canvas',
+        events: { onhover: { enable: true, mode: 'repulse' }, resize: true },
+        modes: { repulse: { distance: 100, duration: 0.4 } }
+      },
+      retina_detect: true
+    });
+
+    const text = "proxy coming soon...";
+    let i = 0;
+    function type() {
+      if (i < text.length) {
+        document.getElementById('typewriter').innerHTML += text.charAt(i);
+        i++;
+        setTimeout(type, 120);
+      }
+    }
+    window.onload = type;
   </script>
 </body>
 </html>`;
@@ -455,7 +614,6 @@ function getIdiotHtml() {
     <source src="/guby.mp3" type="audio/mpeg">
   </audio>
   <script>
-    // Fallback if browser blocks autoplay
     document.addEventListener('click', () => {
       const audio = document.getElementById('bg-audio');
       if (audio.paused) {
