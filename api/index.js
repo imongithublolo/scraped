@@ -641,7 +641,7 @@ function getCreditsHtml() {
       <span class="name">Alfie n</span>
     </div>
     <div class="credit-item">
-      <span class="role">AI Assistant</span>
+      <span class="role">Gay Twat</span>
       <span class="name">claude</span>
     </div>
   </div>
