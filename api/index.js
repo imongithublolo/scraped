@@ -166,7 +166,6 @@ module.exports = async (req, res) => {
     }
 
     if (userRole === 'idiot') {
-      // Clear cookie immediately on load so refreshing resets back to auth screen
       res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(getIdiotHtml());
@@ -186,15 +185,19 @@ module.exports = async (req, res) => {
 
     // 4. Proxy Request for 'main' Authenticated Users
     let targetPath = pathname;
+    
     if (targetPath === '/' || targetPath === '/index.html') {
       targetPath = '/embed/python';
     }
 
     const targetUrl = `https://onecompiler.com${targetPath}${url.search}`;
+    
     const forwardHeaders = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Referer': 'https://onecompiler.com/embed/python',
+      'Referer': 'https://onecompiler.com/',
       'Origin': 'https://onecompiler.com',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5'
     };
 
     if (req.headers['content-type']) {
@@ -222,8 +225,11 @@ module.exports = async (req, res) => {
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
-      // Clear cookie after serving proxy page if you want authentication demanded on every manual page reload
-      res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+      // Fix relative assets & internal links so OneCompiler's JS/CSS bundles load through the proxy
+      html = html.replace(/(href|src)=["']\/([^"']+)["']/g, (match, attr, path) => {
+        if (path.startsWith('http') || path.startsWith('//')) return match;
+        return `${attr}="/${path}"`;
+      });
 
       const injectedPayload = `
         <link rel="icon" type="image/png" href="https://ssl.gstatic.com/classroom/favicon.png">
