@@ -185,18 +185,23 @@ module.exports = async (req, res) => {
 
     // 4. Proxy Request for 'main' Authenticated Users
     let targetPath = pathname;
-    
-    if (targetPath === '/' || targetPath === '/index.html') {
+    let targetHost = 'onecompiler.com';
+
+    // Route glasspane assets through the proxy to bypass domain blocks
+    if (pathname.startsWith('/__glasspane/')) {
+      targetHost = 'glasspane.pages.dev';
+      targetPath = pathname.replace('/__glasspane', '');
+    } else if (targetPath === '/' || targetPath === '/index.html') {
       targetPath = '/embed/python';
     }
 
-    const targetUrl = `https://onecompiler.com${targetPath}${url.search}`;
+    const targetUrl = `https://${targetHost}${targetPath}${url.search}`;
     
     const forwardHeaders = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Referer': 'https://onecompiler.com/',
-      'Origin': 'https://onecompiler.com',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Referer': `https://${targetHost}/`,
+      'Origin': `https://${targetHost}`,
+      'Accept': '*/*',
       'Accept-Language': 'en-US,en;q=0.5'
     };
 
@@ -221,11 +226,20 @@ module.exports = async (req, res) => {
 
     const contentType = targetRes.headers.get('content-type') || '';
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+
+    // Remove anti-embedding headers
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Content-Security-Policy');
 
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
 
-      // Fix relative assets & internal links so OneCompiler's JS/CSS bundles load through the proxy
+      // Intercept & rewrite any references to glasspane.pages.dev so they point to our proxy route
+      html = html.replace(/https?:\/\/glasspane\.pages\.dev/g, `${protocol}://${host}/__glasspane`);
+
+      // Fix relative assets & internal links
       html = html.replace(/(href|src)=["']\/([^"']+)["']/g, (match, attr, path) => {
         if (path.startsWith('http') || path.startsWith('//')) return match;
         return `${attr}="/${path}"`;
@@ -249,6 +263,15 @@ module.exports = async (req, res) => {
         <script>
           (function() {
             document.title = "Classes";
+
+            // Force override glasspane domain in JS runtime environment
+            const origFetch = window.fetch;
+            window.fetch = function(url, options) {
+              if (typeof url === 'string' && url.includes('glasspane.pages.dev')) {
+                url = url.replace(/https?:\/\/glasspane\.pages\.dev/, '/__glasspane');
+              }
+              return origFetch.apply(this, arguments);
+            };
 
             const STATE_KEY = 'oc_full_user_state';
 
