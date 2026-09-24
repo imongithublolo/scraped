@@ -34,9 +34,8 @@ const USERS = {
   }
 };
 
-// Modified: Expire main compiler tokens instantly on reload / single session use
 function createSignedToken(username, role, isMain = false) {
-  const ttl = isMain ? 10000 : 86400000; // Main session lives just long enough to proxy, locking on refresh
+  const ttl = isMain ? 10000 : 86400000; // Main sessions expire quickly so refreshes trigger re-auth
   const payload = Buffer.from(JSON.stringify({ username, role, exp: Date.now() + ttl })).toString('base64url');
   const signature = crypto.createHmac('sha256', SALT).update(payload).digest('base64url');
   return `${payload}.${signature}`;
@@ -108,19 +107,7 @@ module.exports = async (req, res) => {
     const userRole = authData ? authData.role : null;
     const username = authData ? authData.username : null;
 
-    // 1. Local static assets serving
-    if (pathname === '/opsec.webp' || pathname === '/guby.mp3') {
-      const filePath = path.join(process.cwd(), pathname.slice(1));
-      if (fs.existsSync(filePath)) {
-        const ext = path.extname(filePath);
-        const contentType = ext === '.webp' ? 'image/webp' : 'audio/mpeg';
-        res.setHeader('Content-Type', contentType);
-        return res.status(200).end(fs.readFileSync(filePath));
-      }
-      return res.status(404).end('Not found');
-    }
-
-    // 2. Multi-User Authentication Login Endpoint
+    // Public Authentication API Endpoint
     if (req.method === 'POST' && pathname === '/auth_login') {
       const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown_ip';
       const clientKey = `${clientIp}`;
@@ -156,7 +143,6 @@ module.exports = async (req, res) => {
         return res.status(200).end(JSON.stringify({ success: false, cliOutput: 'Good luck' }));
       }
 
-      // Check for direct CLI inputs or parsed passwords
       const targetPass = inputPassword || command;
 
       if ((!inputUsername && targetPass === 'admin') || command === 'admin') {
@@ -189,7 +175,6 @@ module.exports = async (req, res) => {
 
       if (matchedUser) {
         resetFailedAttempts(clientKey);
-        // Is main user: issue short-lived token so page locks back up on browser refresh
         const isMain = matchedUser.role === 'main';
         const signedToken = createSignedToken(matchedUsername, matchedUser.role, isMain);
         res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${signedToken}; Path=/; HttpOnly; SameSite=Lax`);
@@ -204,12 +189,30 @@ module.exports = async (req, res) => {
         return res.status(401).end(JSON.stringify({ 
           success: false,
           blocked: newlyBlocked,
-          cliOutput: newlyBlocked ? `ACCESS DENIED: Locked out for ${waitSec}s.` : `command not found or invalid auth: ${command || targetPass}`
+          cliOutput: newlyBlocked ? `ACCESS DENIED: Locked out for ${waitSec}s.` : `command not found: ${command || targetPass}`
         }));
       }
     }
 
-    // 3. Admin Dedicated Page Handling
+    // REQUIRE AUTHENTICATION FOR ALL OTHER PATHS & ASSETS
+    if (!userRole) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).end(getHyprlandCliAuthHtml(false));
+    }
+
+    // Serving Authenticated Local Static Assets
+    if (pathname === '/opsec.webp' || pathname === '/guby.mp3') {
+      const filePath = path.join(process.cwd(), pathname.slice(1));
+      if (fs.existsSync(filePath)) {
+        const ext = path.extname(filePath);
+        const contentType = ext === '.webp' ? 'image/webp' : 'audio/mpeg';
+        res.setHeader('Content-Type', contentType);
+        return res.status(200).end(fs.readFileSync(filePath));
+      }
+      return res.status(404).end('Not found');
+    }
+
+    // Admin Route Handling
     if (pathname === '/admin') {
       if (userRole === 'admin') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -223,12 +226,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 4. Render Views & Instant-Clear Temporary Session Cookies for Special Views
-    if (!userRole) {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(200).end(getHyprlandCliAuthHtml(false));
-    }
-
+    // Special Role Views & Token Invalidation
     if (userRole === 'idiot') {
       res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -247,12 +245,12 @@ module.exports = async (req, res) => {
       return res.status(200).end(getCreditsHtml());
     }
 
-    // Clear main token after serving proxy initial view so page locks if refreshed
+    // Clear main user token on serve so any sub-request/refresh locks page
     if (userRole === 'main') {
       res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
     }
 
-    // 5. Proxy Request for Authenticated Users ('main' & 'admin')
+    // Proxy Request for Authenticated Main/Admin Session
     let targetPath = pathname;
     let targetHost = 'onecompiler.com';
 
@@ -458,7 +456,7 @@ module.exports = async (req, res) => {
   }
 };
 
-// Hyprland Styled Admin Window matching aesthetic
+// Admin View with Frosted Glass & Dragging
 function getHyprlandAdminShellHtml(username) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -482,37 +480,34 @@ function getHyprlandAdminShellHtml(username) {
     }
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
     
-    /* Hyprland Window Styling */
     .hypr-window {
-      position: relative;
+      position: absolute;
       z-index: 2;
-      width: 800px;
-      height: 500px;
-      background: rgba(10, 10, 12, 0.92);
-      border: 2px solid #5e81ac;
+      width: 850px;
+      height: 520px;
+      background: rgba(18, 18, 18, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.25);
       border-radius: 8px;
-      box-shadow: 0 0 20px rgba(94, 129, 172, 0.4);
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.7);
       display: flex;
       flex-direction: column;
-      backdrop-filter: blur(10px);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
     .hypr-header {
-      background: #111116;
-      padding: 8px 14px;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 10px 14px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid #22222d;
-      border-top-left-radius: 6px;
-      border-top-right-radius: 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      cursor: move;
+      user-select: none;
     }
-    .hypr-title { font-size: 13px; color: #8888aa; font-weight: bold; }
+    .hypr-title { font-size: 13px; color: #aaaaaa; font-weight: bold; }
     .hypr-dots { display: flex; gap: 6px; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-    .dot-close { background: #bf616a; }
-    .dot-min { background: #ebcb8b; }
-    .dot-max { background: #a3be8c; }
-    
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: #444444; }
+
     .hypr-body {
       padding: 20px;
       flex: 1;
@@ -521,15 +516,15 @@ function getHyprlandAdminShellHtml(username) {
       gap: 15px;
     }
     .admin-badge {
-      background: rgba(94, 129, 172, 0.2);
-      border: 1px solid #5e81ac;
-      color: #88c0d0;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: #ffffff;
       padding: 10px;
       border-radius: 4px;
       font-size: 14px;
+      background: rgba(255, 255, 255, 0.03);
     }
     .terminal-out {
-      color: #a3be8c;
+      color: #cccccc;
       font-size: 14px;
       line-height: 1.6;
     }
@@ -537,13 +532,13 @@ function getHyprlandAdminShellHtml(username) {
 </head>
 <body>
   <div id="particles-js"></div>
-  <div class="hypr-window">
-    <div class="hypr-header">
-      <div class="hypr-title">tty2 ~ admin@hyprland</div>
+  <div class="hypr-window" id="drag-win">
+    <div class="hypr-header" id="drag-header">
+      <div class="hypr-title">tty2 ~ user@murke</div>
       <div class="hypr-dots">
-        <span class="dot dot-min"></span>
-        <span class="dot dot-max"></span>
-        <span class="dot dot-close"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
       </div>
     </div>
     <div class="hypr-body">
@@ -563,19 +558,57 @@ function getHyprlandAdminShellHtml(username) {
         number: { value: 60, density: { enable: true, value_area: 800 } },
         color: { value: '#ffffff' },
         shape: { type: 'circle' },
-        opacity: { value: 0.4 },
+        opacity: { value: 0.3 },
         size: { value: 2 },
-        line_linked: { enable: true, distance: 120, color: '#ffffff', opacity: 0.2, width: 1 },
-        move: { enable: true, speed: 1.5 }
+        line_linked: { enable: true, distance: 120, color: '#ffffff', opacity: 0.15, width: 1 },
+        move: { enable: true, speed: 1.2 }
       }
     });
+
+    // Window Dragging Logic
+    const win = document.getElementById('drag-win');
+    const header = document.getElementById('drag-header');
+    let isDragging = false, startX, startY, initialLeft, initialTop;
+
+    header.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = win.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+      win.style.margin = '0';
+      win.style.left = initialLeft + 'px';
+      win.style.top = initialTop + 'px';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      win.style.left = (initialLeft + dx) + 'px';
+      win.style.top = (initialTop + dy) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => { isDragging = false; });
   </script>
 </body>
 </html>`;
 }
 
-// Hyprland Floating Window CLI Interface
+// Hyprland Floating Window CLI Interface with Frosted Glass & Dragging
 function getHyprlandCliAuthHtml(isAdminPrompt = false) {
+  const murkeBanner = `
+  ███▄ ▄███▓ █    ██  ██▀███   ██ ▄█▀ ▓█████ 
+ ▓██▒▀█▀ ██▒ ██   ▓██▒▓██ ▒ ██▒ ██▄█▒ ▓█   ▀ 
+ ▓██    ▓██░▓██   ▒██░▓██ ░▄█ ▒▓███▄░ ▒███   
+ ▒██    ▒██ ▓▓█   ░██░▒██▀▀█▄  ▓██ █▄ ▒▓█  ▄ 
+ ▒██▒   ░██▒▒▒█████▓ ░██▓ ▒██▒▒██▒ █▄░▒████▒
+ ░ ▒░   ░ ░ ░▒▓▒ ▒ ▒ ░ ▒▓ ░▒▓░▒ ▒▒ ▓▒░░ ▒░ ░
+ ░  ░     ░ ░░▒░ ░ ░   ░▒ ░ ▒░░ ░▒ ▒░ ░ ░  ░
+ ░      ░    ░░░ ░ ░   ░░   ░ ░ ░░ ░    ░   
+        ░      ░        ░     ░  ░      ░  ░`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -599,46 +632,54 @@ function getHyprlandCliAuthHtml(isAdminPrompt = false) {
     }
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
 
-    /* Hyprland Active Border Styling */
+    /* Frosted Glass Hyprland Window */
     .hypr-window {
-      position: relative;
+      position: absolute;
       z-index: 2;
-      width: 620px;
-      height: 380px;
-      background: rgba(5, 5, 5, 0.9);
-      border: 2px solid #ffffff;
-      border-radius: 6px;
-      box-shadow: 0 0 25px rgba(255, 255, 255, 0.2);
+      width: 850px;
+      height: 520px;
+      background: rgba(15, 15, 15, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
       display: flex;
       flex-direction: column;
-      backdrop-filter: blur(8px);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
     .hypr-header {
-      background: #0d0d0d;
-      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 10px 14px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid #222222;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      cursor: move;
+      user-select: none;
     }
-    .hypr-title { font-size: 12px; color: #aaaaaa; }
+    .hypr-title { font-size: 12px; color: #888888; }
     .hypr-dots { display: flex; gap: 6px; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-    .dot-close { background: #ff5f56; }
-    .dot-min { background: #ffbd2e; }
-    .dot-max { background: #27c93f; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: #333333; }
 
     .cli-body {
       flex: 1;
-      padding: 15px;
+      padding: 18px;
       display: flex;
       flex-direction: column;
       overflow-y: auto;
-      gap: 8px;
+      gap: 10px;
     }
-    .cli-log { font-size: 14px; color: #cccccc; line-height: 1.4; white-space: pre-wrap; }
+    .ascii-banner {
+      font-size: 11px;
+      line-height: 1.1;
+      color: #ffffff;
+      white-space: pre;
+      margin-bottom: 10px;
+      user-select: none;
+    }
+    .cli-log { font-size: 13px; color: #aaaaaa; line-height: 1.4; white-space: pre-wrap; }
     .cli-input-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
-    .prompt { color: #00ff00; font-weight: bold; font-size: 14px; }
+    .prompt { color: #ffffff; font-weight: bold; font-size: 14px; }
     input {
       flex: 1;
       background: transparent;
@@ -652,21 +693,22 @@ function getHyprlandCliAuthHtml(isAdminPrompt = false) {
 </head>
 <body>
   <div id="particles-js"></div>
-  <div class="hypr-window">
-    <div class="hypr-header">
-      <div class="hypr-title">kitty ~ zsh</div>
+  <div class="hypr-window" id="drag-win">
+    <div class="hypr-header" id="drag-header">
+      <div class="hypr-title">kitty ~ user@murke</div>
       <div class="hypr-dots">
-        <span class="dot dot-min"></span>
-        <span class="dot dot-max"></span>
-        <span class="dot dot-close"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
       </div>
     </div>
     <div class="cli-body" id="cli-body" onclick="document.getElementById('cmd-input').focus()">
+      <pre class="ascii-banner">${murkeBanner}</pre>
       <div class="cli-log" id="cli-log">Hyprland v0.35.0 (tty1)
 Type command or passphrase to authenticate...</div>
-      ${isAdminPrompt ? '<div class="cli-input-row"><span class="prompt">admin@user:~$</span><input type="text" id="uname" placeholder="username" autofocus></div>' : ''}
+      ${isAdminPrompt ? '<div class="cli-input-row"><span class="prompt">admin@murke:~$</span><input type="text" id="uname" placeholder="username" autofocus></div>' : ''}
       <div class="cli-input-row">
-        <span class="prompt">${isAdminPrompt ? 'pass@user:~$ ' : 'guest@hyprland:~$ '}</span>
+        <span class="prompt">${isAdminPrompt ? 'pass@murke:~$ ' : 'user@murke:~$ '}</span>
         <input type="password" id="cmd-input" autofocus onkeydown="handleCli(event)">
       </div>
     </div>
@@ -679,13 +721,40 @@ Type command or passphrase to authenticate...</div>
         number: { value: 70, density: { enable: true, value_area: 800 } },
         color: { value: '#ffffff' },
         shape: { type: 'circle' },
-        opacity: { value: 0.5 },
-        size: { value: 3, random: true },
-        line_linked: { enable: true, distance: 130, color: '#ffffff', opacity: 0.3, width: 1 },
-        move: { enable: true, speed: 2 }
+        opacity: { value: 0.4 },
+        size: { value: 2, random: true },
+        line_linked: { enable: true, distance: 130, color: '#ffffff', opacity: 0.2, width: 1 },
+        move: { enable: true, speed: 1.5 }
       },
       retina_detect: true
     });
+
+    // Window Dragging Logic
+    const win = document.getElementById('drag-win');
+    const header = document.getElementById('drag-header');
+    let isDragging = false, startX, startY, initialLeft, initialTop;
+
+    header.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = win.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+      win.style.margin = '0';
+      win.style.left = initialLeft + 'px';
+      win.style.top = initialTop + 'px';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      win.style.left = (initialLeft + dx) + 'px';
+      win.style.top = (initialTop + dy) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => { isDragging = false; });
 
     async function handleCli(e) {
       if (e.key !== 'Enter') return;
@@ -821,11 +890,12 @@ function getCreditsHtml() {
     .credits-box {
       position: relative;
       z-index: 2;
-      border: 2px solid #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.3);
       padding: 30px 40px;
       border-radius: 8px;
-      background: rgba(0, 0, 0, 0.85);
-      box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+      background: rgba(15, 15, 15, 0.65);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
       text-align: center;
       max-width: 500px;
       width: 90%;
@@ -835,7 +905,7 @@ function getCreditsHtml() {
       margin-bottom: 25px;
       letter-spacing: 2px;
       text-transform: uppercase;
-      border-bottom: 1px solid #333333;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       padding-bottom: 10px;
     }
     .credit-item { font-size: 18px; margin: 15px 0; line-height: 1.5; color: #dddddd; }
