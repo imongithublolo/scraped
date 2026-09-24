@@ -54,7 +54,7 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `${protocol}://${host}`);
     const pathname = url.pathname;
 
-    // Authentication API
+    // Authentication API Endpoint
     if (req.method === 'POST' && pathname === '/auth_login') {
       const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown_ip';
       const clientKey = `${clientIp}`;
@@ -72,12 +72,10 @@ module.exports = async (req, res) => {
       let bodyStr = '';
       for await (const chunk of req) { bodyStr += chunk; }
 
-      let inputUsername = '';
       let inputPassword = '';
       let command = '';
       try {
         const json = JSON.parse(bodyStr);
-        inputUsername = (json.username || '').trim();
         inputPassword = (json.password || '').trim();
         command = (json.command || '').trim();
       } catch (e) {}
@@ -89,7 +87,7 @@ module.exports = async (req, res) => {
 
       const targetPass = inputPassword || command;
 
-      if ((!inputUsername && targetPass === 'admin') || command === 'admin') {
+      if (targetPass === 'admin') {
         resetFailedAttempts(clientKey);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ success: true, role: 'admin', username: 'guest_admin' }));
@@ -99,19 +97,11 @@ module.exports = async (req, res) => {
       let matchedUser = null;
       let matchedUsername = null;
 
-      if (inputUsername && USERS[inputUsername]) {
-        const candidate = USERS[inputUsername];
-        if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(candidate.passwordHash))) {
-          matchedUser = candidate;
-          matchedUsername = inputUsername;
-        }
-      } else {
-        for (const [uname, userObj] of Object.entries(USERS)) {
-          if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(userObj.passwordHash))) {
-            matchedUser = userObj;
-            matchedUsername = uname;
-            break;
-          }
+      for (const [uname, userObj] of Object.entries(USERS)) {
+        if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(userObj.passwordHash))) {
+          matchedUser = userObj;
+          matchedUsername = uname;
+          break;
         }
       }
 
@@ -128,12 +118,12 @@ module.exports = async (req, res) => {
         return res.status(401).end(JSON.stringify({ 
           success: false,
           blocked: newlyBlocked,
-          cliOutput: newlyBlocked ? `ACCESS DENIED: Locked out for ${waitSec}s.` : `command not found: ${command || targetPass}`
+          cliOutput: newlyBlocked ? `ACCESS DENIED: Locked out for ${waitSec}s.` : `Invalid passphrase.`
         }));
       }
     }
 
-    // Static Assets
+    // Serve Static Assets
     if (pathname === '/opsec.webp' || pathname === '/guby.mp3') {
       const filePath = path.join(process.cwd(), pathname.slice(1));
       if (fs.existsSync(filePath)) {
@@ -144,7 +134,7 @@ module.exports = async (req, res) => {
       return res.status(404).end('Not found');
     }
 
-    // Internal Embed Proxy Path
+    // Embed Proxy Routing
     if (pathname.startsWith('/__proxy/')) {
       let targetHost = 'onecompiler.com';
       let targetPath = pathname.replace('/__proxy', '');
@@ -172,7 +162,7 @@ module.exports = async (req, res) => {
       return res.status(targetRes.status).end(buffer);
     }
 
-    // Render Full Desktop Environment
+    // Main HTML Payload
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.status(200).end(getDesktopEnvironmentHtml());
 
@@ -225,7 +215,7 @@ function getDesktopEnvironmentHtml() {
 
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
 
-    /* Original Boxy Auth Modal Screen */
+    /* Clean Single-Box Auth Modal */
     #lock-screen {
       position: absolute;
       top: 0;
@@ -323,7 +313,6 @@ function getDesktopEnvironmentHtml() {
       display: none;
     }
 
-    /* Bright Frosted Glass Windows */
     .wm-window {
       position: absolute;
       background: rgba(25, 25, 30, 0.75);
@@ -432,7 +421,7 @@ function getDesktopEnvironmentHtml() {
       user-select: text;
     }
 
-    /* macOS Dock Styling */
+    /* macOS Dock */
     #dock-container {
       position: absolute;
       bottom: 12px;
@@ -510,11 +499,11 @@ function getDesktopEnvironmentHtml() {
 <body>
   <div id="particles-js"></div>
 
-  <!-- Standard Boxy Password Screen -->
+  <!-- Original Single Box Screen -->
   <div id="lock-screen">
     <div class="boxy-card">
       <div class="boxy-title">AUTHENTICATION</div>
-      <div class="boxy-subtitle">Enter password to unlock system</div>
+      <div class="boxy-subtitle">Enter passphrase to unlock</div>
       <input type="password" id="lock-input" class="boxy-input" placeholder="Password" autofocus onkeydown="if(event.key==='Enter') submitAuth()">
       <button class="boxy-btn" onclick="submitAuth()">UNLOCK</button>
       <div id="lock-err"></div>
@@ -542,7 +531,7 @@ function getDesktopEnvironmentHtml() {
 
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script>
-    /* Default Standard ParticlesJS Config */
+    /* Standard Unrestricted ParticlesJS */
     particlesJS('particles-js', {
       particles: {
         number: { value: 80, density: { enable: true, value_area: 800 } },
@@ -589,7 +578,7 @@ function getDesktopEnvironmentHtml() {
           else if (data.role === 'credits') openWindow('credits');
           else openWindow('terminal');
         } else {
-          errEl.innerText = data.cliOutput || data.message || 'Incorrect password.';
+          errEl.innerText = data.cliOutput || data.message || 'Incorrect passphrase.';
           inputEl.value = '';
         }
       } catch (err) {
@@ -748,4 +737,5 @@ Logged in as: \${currentSession ? currentSession.username : 'guest'}</div>
   </script>
 </body>
 </html>`;
+}
 }
