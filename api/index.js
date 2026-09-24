@@ -34,8 +34,10 @@ const USERS = {
   }
 };
 
-function createSignedToken(username, role) {
-  const payload = Buffer.from(JSON.stringify({ username, role, exp: Date.now() + 86400000 })).toString('base64url');
+// Modified: Expire main compiler tokens instantly on reload / single session use
+function createSignedToken(username, role, isMain = false) {
+  const ttl = isMain ? 10000 : 86400000; // Main session lives just long enough to proxy, locking on refresh
+  const payload = Buffer.from(JSON.stringify({ username, role, exp: Date.now() + ttl })).toString('base64url');
   const signature = crypto.createHmac('sha256', SALT).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
@@ -129,7 +131,7 @@ module.exports = async (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         return res.status(429).end(JSON.stringify({ 
           success: false, 
-          message: `Too many failed attempts. Try again in ${waitSec} second(s).` 
+          message: `System locked. Retry in ${waitSec}s.` 
         }));
       }
 
@@ -140,14 +142,24 @@ module.exports = async (req, res) => {
 
       let inputUsername = '';
       let inputPassword = '';
+      let command = '';
       try {
         const json = JSON.parse(bodyStr);
         inputUsername = (json.username || '').trim();
-        inputPassword = json.password || '';
+        inputPassword = (json.password || '').trim();
+        command = (json.command || '').trim();
       } catch (e) {}
 
-      // Flow: Entering 'admin' in the primary prompt redirects to /admin
-      if (!inputUsername && inputPassword === 'admin') {
+      // Handle CLI Command Routing
+      if (command.toLowerCase() === 'help') {
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(200).end(JSON.stringify({ success: false, cliOutput: 'Good luck' }));
+      }
+
+      // Check for direct CLI inputs or parsed passwords
+      const targetPass = inputPassword || command;
+
+      if ((!inputUsername && targetPass === 'admin') || command === 'admin') {
         resetFailedAttempts(clientKey);
         const signedToken = createSignedToken('guest_admin', 'admin_prompt');
         res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${signedToken}; Path=/; HttpOnly; SameSite=Lax`);
@@ -155,7 +167,7 @@ module.exports = async (req, res) => {
         return res.status(200).end(JSON.stringify({ success: true, redirect: '/admin' }));
       }
 
-      const inputHash = hashPassword(inputPassword);
+      const inputHash = hashPassword(targetPass);
       let matchedUser = null;
       let matchedUsername = null;
 
@@ -177,7 +189,9 @@ module.exports = async (req, res) => {
 
       if (matchedUser) {
         resetFailedAttempts(clientKey);
-        const signedToken = createSignedToken(matchedUsername, matchedUser.role);
+        // Is main user: issue short-lived token so page locks back up on browser refresh
+        const isMain = matchedUser.role === 'main';
+        const signedToken = createSignedToken(matchedUsername, matchedUser.role, isMain);
         res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${signedToken}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ success: true, role: matchedUser.role, username: matchedUsername }));
@@ -190,7 +204,7 @@ module.exports = async (req, res) => {
         return res.status(401).end(JSON.stringify({ 
           success: false,
           blocked: newlyBlocked,
-          message: newlyBlocked ? `Too many wrong attempts! Blocked for ${waitSec}s.` : 'Invalid credentials'
+          cliOutput: newlyBlocked ? `ACCESS DENIED: Locked out for ${waitSec}s.` : `command not found or invalid auth: ${command || targetPass}`
         }));
       }
     }
@@ -199,20 +213,20 @@ module.exports = async (req, res) => {
     if (pathname === '/admin') {
       if (userRole === 'admin') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.status(200).end(getAdminShellHtml(username));
+        return res.status(200).end(getHyprlandAdminShellHtml(username));
       } else if (userRole === 'admin_prompt') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.status(200).end(getParticlesAuthHtml(true));
+        return res.status(200).end(getHyprlandCliAuthHtml(true));
       } else {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.status(200).end(getParticlesAuthHtml(false));
+        return res.status(200).end(getHyprlandCliAuthHtml(false));
       }
     }
 
     // 4. Render Views & Instant-Clear Temporary Session Cookies for Special Views
     if (!userRole) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(200).end(getParticlesAuthHtml(false));
+      return res.status(200).end(getHyprlandCliAuthHtml(false));
     }
 
     if (userRole === 'idiot') {
@@ -231,6 +245,11 @@ module.exports = async (req, res) => {
       res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(getCreditsHtml());
+    }
+
+    // Clear main token after serving proxy initial view so page locks if refreshed
+    if (userRole === 'main') {
+      res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
     }
 
     // 5. Proxy Request for Authenticated Users ('main' & 'admin')
@@ -439,89 +458,124 @@ module.exports = async (req, res) => {
   }
 };
 
-function getAdminShellHtml(username) {
+// Hyprland Styled Admin Window matching aesthetic
+function getHyprlandAdminShellHtml(username) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Classes - Admin Panel</title>
+  <title>Classes</title>
   <link rel="icon" type="image/png" href="https://ssl.gstatic.com/classroom/favicon.png">
   <link rel="shortcut icon" href="https://ssl.gstatic.com/classroom/favicon.png">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: #0a0a0c;
+      background: #000000;
       color: #ffffff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
+    
+    /* Hyprland Window Styling */
+    .hypr-window {
+      position: relative;
+      z-index: 2;
+      width: 800px;
+      height: 500px;
+      background: rgba(10, 10, 12, 0.92);
+      border: 2px solid #5e81ac;
+      border-radius: 8px;
+      box-shadow: 0 0 20px rgba(94, 129, 172, 0.4);
       display: flex;
       flex-direction: column;
+      backdrop-filter: blur(10px);
     }
-    header {
-      background: #121216;
-      border-bottom: 1px solid #22222a;
-      padding: 18px 30px;
+    .hypr-header {
+      background: #111116;
+      padding: 8px 14px;
       display: flex;
       justify-content: space-between;
       align-items: center;
+      border-bottom: 1px solid #22222d;
+      border-top-left-radius: 6px;
+      border-top-right-radius: 6px;
     }
-    .brand {
-      font-weight: 700;
-      font-size: 18px;
-      letter-spacing: 0.5px;
-      color: #3b82f6;
-    }
-    .user-tag {
-      font-size: 14px;
-      color: #888899;
-      background: #1a1a24;
-      padding: 6px 12px;
-      border-radius: 6px;
-      border: 1px solid #2a2a38;
-    }
-    main {
+    .hypr-title { font-size: 13px; color: #8888aa; font-weight: bold; }
+    .hypr-dots { display: flex; gap: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .dot-close { background: #bf616a; }
+    .dot-min { background: #ebcb8b; }
+    .dot-max { background: #a3be8c; }
+    
+    .hypr-body {
+      padding: 20px;
       flex: 1;
-      padding: 40px;
-      max-width: 1000px;
-      width: 100%;
-      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
     }
-    .panel-card {
-      background: #121216;
-      border: 1px solid #22222a;
-      border-radius: 8px;
-      padding: 30px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    .admin-badge {
+      background: rgba(94, 129, 172, 0.2);
+      border: 1px solid #5e81ac;
+      color: #88c0d0;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 14px;
     }
-    h1 {
-      font-size: 24px;
-      margin-bottom: 10px;
-      font-weight: 600;
-    }
-    p {
-      color: #9999aa;
-      font-size: 15px;
-      line-height: 1.5;
+    .terminal-out {
+      color: #a3be8c;
+      font-size: 14px;
+      line-height: 1.6;
     }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">Admin Dashboard</div>
-    <div class="user-tag">Logged in as: <strong>${username || 'b29s'}</strong></div>
-  </header>
-  <main>
-    <div class="panel-card">
-      <h1>Admin Control Panel Shell</h1>
-      <p>Authentication step complete. Ready to design internal components.</p>
+  <div id="particles-js"></div>
+  <div class="hypr-window">
+    <div class="hypr-header">
+      <div class="hypr-title">tty2 ~ admin@hyprland</div>
+      <div class="hypr-dots">
+        <span class="dot dot-min"></span>
+        <span class="dot dot-max"></span>
+        <span class="dot dot-close"></span>
+      </div>
     </div>
-  </main>
+    <div class="hypr-body">
+      <div class="admin-badge">LOGGED IN AS: [${username || 'b29s'}]</div>
+      <div class="terminal-out">
+        > SYSTEM STATE: SECURE<br>
+        > ROLES LOADED: admin, main, idiot, coming_soon, credits<br>
+        > CONTROL SHELL ACTIVE.
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
+  <script>
+    particlesJS('particles-js', {
+      particles: {
+        number: { value: 60, density: { enable: true, value_area: 800 } },
+        color: { value: '#ffffff' },
+        shape: { type: 'circle' },
+        opacity: { value: 0.4 },
+        size: { value: 2 },
+        line_linked: { enable: true, distance: 120, color: '#ffffff', opacity: 0.2, width: 1 },
+        move: { enable: true, speed: 1.5 }
+      }
+    });
+  </script>
 </body>
 </html>`;
 }
 
-function getParticlesAuthHtml(isAdminPrompt = false) {
+// Hyprland Floating Window CLI Interface
+function getHyprlandCliAuthHtml(isAdminPrompt = false) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -544,109 +598,131 @@ function getParticlesAuthHtml(isAdminPrompt = false) {
       position: relative; 
     }
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
-    .auth-box { 
-      position: relative; 
-      z-index: 2; 
+
+    /* Hyprland Active Border Styling */
+    .hypr-window {
+      position: relative;
+      z-index: 2;
+      width: 620px;
+      height: 380px;
+      background: rgba(5, 5, 5, 0.9);
+      border: 2px solid #ffffff;
+      border-radius: 6px;
+      box-shadow: 0 0 25px rgba(255, 255, 255, 0.2);
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      backdrop-filter: blur(8px);
     }
-    input { 
-      background: #000000; 
-      border: 2px solid #ffffff; 
-      border-radius: 4px; 
-      color: #ffffff; 
-      padding: 12px 18px; 
-      font-size: 16px; 
-      font-family: 'Courier New', Courier, monospace; 
-      outline: none; 
-      width: 280px; 
-      text-align: center; 
-      transition: all 0.2s; 
-      box-shadow: 0 0 15px rgba(255, 255, 255, 0.15); 
+    .hypr-header {
+      background: #0d0d0d;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #222222;
     }
-    input::placeholder { color: #666666; font-family: 'Courier New', Courier, monospace; }
-    input:focus { border-color: #ffffff; box-shadow: 0 0 25px rgba(255, 255, 255, 0.6); }
+    .hypr-title { font-size: 12px; color: #aaaaaa; }
+    .hypr-dots { display: flex; gap: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .dot-close { background: #ff5f56; }
+    .dot-min { background: #ffbd2e; }
+    .dot-max { background: #27c93f; }
+
+    .cli-body {
+      flex: 1;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      gap: 8px;
+    }
+    .cli-log { font-size: 14px; color: #cccccc; line-height: 1.4; white-space: pre-wrap; }
+    .cli-input-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+    .prompt { color: #00ff00; font-weight: bold; font-size: 14px; }
+    input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #ffffff;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
   <div id="particles-js"></div>
-  <div class="auth-box">
-    ${isAdminPrompt ? '<input type="text" id="uname" placeholder="Username..." autofocus>' : ''}
-    <input type="password" id="pass" placeholder="Password..." ${!isAdminPrompt ? 'autofocus' : ''} onkeydown="if(event.key==='Enter') submitAuth()">
+  <div class="hypr-window">
+    <div class="hypr-header">
+      <div class="hypr-title">kitty ~ zsh</div>
+      <div class="hypr-dots">
+        <span class="dot dot-min"></span>
+        <span class="dot dot-max"></span>
+        <span class="dot dot-close"></span>
+      </div>
+    </div>
+    <div class="cli-body" id="cli-body" onclick="document.getElementById('cmd-input').focus()">
+      <div class="cli-log" id="cli-log">Hyprland v0.35.0 (tty1)
+Type command or passphrase to authenticate...</div>
+      ${isAdminPrompt ? '<div class="cli-input-row"><span class="prompt">admin@user:~$</span><input type="text" id="uname" placeholder="username" autofocus></div>' : ''}
+      <div class="cli-input-row">
+        <span class="prompt">${isAdminPrompt ? 'pass@user:~$ ' : 'guest@hyprland:~$ '}</span>
+        <input type="password" id="cmd-input" autofocus onkeydown="handleCli(event)">
+      </div>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script>
-    const isRainbow = Math.floor(Math.random() * 1000) === 0;
-    const particleColors = isRainbow 
-      ? ['#ff0000', '#ff7f00', '#ffff00', '#00ff00', '#0000ff', '#4b0082', '#8b00ff']
-      : '#ffffff';
-
     particlesJS('particles-js', {
       particles: {
-        number: { value: 80, density: { enable: true, value_area: 800 } },
-        color: { value: particleColors },
+        number: { value: 70, density: { enable: true, value_area: 800 } },
+        color: { value: '#ffffff' },
         shape: { type: 'circle' },
-        opacity: { value: 0.6, random: false },
+        opacity: { value: 0.5 },
         size: { value: 3, random: true },
-        line_linked: {
-          enable: true,
-          distance: 140,
-          color: '#ffffff',
-          opacity: 0.4,
-          width: 1
-        },
-        move: {
-          enable: true,
-          speed: 2,
-          direction: 'none',
-          random: false,
-          straight: false,
-          out_mode: 'out',
-          bounce: false
-        }
-      },
-      interactivity: {
-        detect_on: 'canvas',
-        events: {
-          onhover: { enable: true, mode: 'repulse' },
-          onclick: { enable: true, mode: 'push' },
-          resize: true
-        },
-        modes: {
-          repulse: { distance: 100, duration: 0.4 },
-          grab: { distance: 140, line_linked: { opacity: 0.8 } },
-          push: { particles_nb: 4 }
-        }
+        line_linked: { enable: true, distance: 130, color: '#ffffff', opacity: 0.3, width: 1 },
+        move: { enable: true, speed: 2 }
       },
       retina_detect: true
     });
 
-    async function submitAuth() {
+    async function handleCli(e) {
+      if (e.key !== 'Enter') return;
+      
+      const inputEl = document.getElementById('cmd-input');
       const unameEl = document.getElementById('uname');
-      const uname = unameEl ? unameEl.value : '';
-      const pass = document.getElementById('pass').value;
+      const logEl = document.getElementById('cli-log');
+      
+      const cmd = inputEl.value.trim();
+      const uname = unameEl ? unameEl.value.trim() : '';
+
+      if (cmd === 'clear') {
+        logEl.innerHTML = '';
+        inputEl.value = '';
+        return;
+      }
 
       try {
         const res = await fetch('/auth_login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: uname, password: pass })
+          body: JSON.stringify({ username: uname, command: cmd })
         });
         const data = await res.json();
+        
         if (data.success) {
-          if (data.redirect) {
-            window.location.href = data.redirect;
-          } else {
-            window.location.reload();
-          }
+          if (data.redirect) window.location.href = data.redirect;
+          else window.location.reload();
         } else {
-          const el = document.getElementById('pass');
-          el.value = '';
-          el.placeholder = data.message || 'Wrong Password';
+          logEl.innerHTML += '\\n> ' + (data.cliOutput || data.message || 'Error: Unauthorized access');
+          inputEl.value = '';
+          const body = document.getElementById('cli-body');
+          body.scrollTop = body.scrollHeight;
         }
-      } catch (e) {}
+      } catch (err) {
+        logEl.innerHTML += '\\n> System network error.';
+      }
     }
   </script>
 </body>
@@ -673,7 +749,6 @@ function getComingSoonHtml() {
       align-items: center;
       justify-content: center;
       font-family: 'Courier New', Courier, monospace;
-      position: relative;
     }
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
     .text-box {
@@ -686,16 +761,12 @@ function getComingSoonHtml() {
       padding-right: 5px;
       animation: blink 0.75s step-end infinite;
     }
-    @keyframes blink {
-      from, to { border-color: transparent }
-      50% { border-color: #ffffff; }
-    }
+    @keyframes blink { from, to { border-color: transparent } 50% { border-color: #ffffff; } }
   </style>
 </head>
 <body>
   <div id="particles-js"></div>
   <div class="text-box" id="typewriter"></div>
-
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script>
     particlesJS('particles-js', {
@@ -703,23 +774,11 @@ function getComingSoonHtml() {
         number: { value: 60, density: { enable: true, value_area: 800 } },
         color: { value: '#ffffff' },
         shape: { type: 'circle' },
-        opacity: { value: 0.5, random: false },
-        size: { value: 3, random: true },
-        line_linked: {
-          enable: true,
-          distance: 130,
-          color: '#ffffff',
-          opacity: 0.3,
-          width: 1
-        },
-        move: { enable: true, speed: 1.5, direction: 'none', out_mode: 'out' }
-      },
-      interactivity: {
-        detect_on: 'canvas',
-        events: { onhover: { enable: true, mode: 'repulse' }, resize: true },
-        modes: { repulse: { distance: 100, duration: 0.4 } }
-      },
-      retina_detect: true
+        opacity: { value: 0.5 },
+        size: { value: 3 },
+        line_linked: { enable: true, distance: 130, color: '#ffffff', opacity: 0.3, width: 1 },
+        move: { enable: true, speed: 1.5 }
+      }
     });
 
     const text = "proxy coming soon...";
@@ -757,7 +816,6 @@ function getCreditsHtml() {
       align-items: center;
       justify-content: center;
       font-family: 'Courier New', Courier, monospace;
-      position: relative;
     }
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
     .credits-box {
@@ -780,24 +838,9 @@ function getCreditsHtml() {
       border-bottom: 1px solid #333333;
       padding-bottom: 10px;
     }
-    .credit-item {
-      font-size: 18px;
-      margin: 15px 0;
-      line-height: 1.5;
-      color: #dddddd;
-    }
-    .role {
-      color: #888888;
-      font-size: 14px;
-      display: block;
-      margin-bottom: 2px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-    }
-    .name {
-      color: #ffffff;
-      font-weight: bold;
-    }
+    .credit-item { font-size: 18px; margin: 15px 0; line-height: 1.5; color: #dddddd; }
+    .role { color: #888888; font-size: 14px; display: block; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 1px; }
+    .name { color: #ffffff; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -829,23 +872,11 @@ function getCreditsHtml() {
         number: { value: 60, density: { enable: true, value_area: 800 } },
         color: { value: '#ffffff' },
         shape: { type: 'circle' },
-        opacity: { value: 0.5, random: false },
-        size: { value: 3, random: true },
-        line_linked: {
-          enable: true,
-          distance: 130,
-          color: '#ffffff',
-          opacity: 0.3,
-          width: 1
-        },
-        move: { enable: true, speed: 1.5, direction: 'none', out_mode: 'out' }
-      },
-      interactivity: {
-        detect_on: 'canvas',
-        events: { onhover: { enable: true, mode: 'repulse' }, resize: true },
-        modes: { repulse: { distance: 100, duration: 0.4 } }
-      },
-      retina_detect: true
+        opacity: { value: 0.5 },
+        size: { value: 3 },
+        line_linked: { enable: true, distance: 130, color: '#ffffff', opacity: 0.3, width: 1 },
+        move: { enable: true, speed: 1.5 }
+      }
     });
   </script>
 </body>
@@ -876,11 +907,7 @@ function getIdiotHtml() {
       animation: blink 0.4s infinite;
       margin-bottom: 20px;
     }
-    @keyframes blink {
-      0% { opacity: 1; }
-      50% { opacity: 0; }
-      100% { opacity: 1; }
-    }
+    @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
     .box {
       background: #00ffff;
       border: 8px dashed #ff0000;
@@ -910,9 +937,7 @@ function getIdiotHtml() {
       margin-top: 20px;
       font-weight: bold;
     }
-    button:hover {
-      background: #ffff00;
-    }
+    button:hover { background: #ffff00; }
   </style>
 </head>
 <body>
@@ -922,9 +947,7 @@ function getIdiotHtml() {
   <script>
     document.addEventListener('click', () => {
       const audio = document.getElementById('bg-audio');
-      if (audio.paused) {
-        audio.play().catch(e => {});
-      }
+      if (audio.paused) { audio.play().catch(e => {}); }
     }, { once: true });
   </script>
   <marquee behavior="alternate">*** ERROR 404: BRAIN CELL NOT FOUND ***</marquee>
