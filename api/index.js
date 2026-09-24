@@ -2,15 +2,12 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-// Centralized Secret & Hashing Setup
 const SALT = process.env.AUTH_SALT || 'app_secure_salt_v1';
-const AUTH_COOKIE_NAME = 'site_access_token';
 
 function hashPassword(plainTextPassword) {
   return crypto.scryptSync(plainTextPassword, SALT, 64).toString('hex');
 }
 
-// Multi-User Database Architecture
 const USERS = {
   b29s: { passwordHash: hashPassword('Wspeed67.100.455310'), role: 'admin' },
   main_user: { passwordHash: hashPassword('MarkX99'), role: 'main' },
@@ -18,28 +15,6 @@ const USERS = {
   coming_soon_user: { passwordHash: hashPassword('310554'), role: 'coming_soon' },
   credits_user: { passwordHash: hashPassword('credits99x55'), role: 'credits' }
 };
-
-function createSignedToken(username, role) {
-  const payload = Buffer.from(JSON.stringify({ username, role, exp: Date.now() + 86400000 })).toString('base64url');
-  const signature = crypto.createHmac('sha256', SALT).update(payload).digest('base64url');
-  return `${payload}.${signature}`;
-}
-
-function verifyToken(token) {
-  if (!token || !token.includes('.')) return null;
-  const [payload, signature] = token.split('.');
-  const expectedSignature = crypto.createHmac('sha256', SALT).update(payload).digest('base64url');
-  
-  if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-    try {
-      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-      if (data.exp > Date.now()) return data;
-    } catch (e) {
-      return null;
-    }
-  }
-  return null;
-}
 
 const rateLimitMap = new Map();
 
@@ -72,23 +47,12 @@ function resetFailedAttempts(key) {
   rateLimitMap.delete(key);
 }
 
-function getCookieValue(cookieHeader, name) {
-  const match = cookieHeader.match(new RegExp('(^| )' + name + '=([^;]+)'));
-  return match ? match[2] : null;
-}
-
 module.exports = async (req, res) => {
   try {
     const host = req.headers.host || 'localhost';
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     const url = new URL(req.url, `${protocol}://${host}`);
     const pathname = url.pathname;
-
-    const cookies = req.headers.cookie || '';
-    const token = getCookieValue(cookies, AUTH_COOKIE_NAME);
-    const authData = verifyToken(token);
-    const userRole = authData ? authData.role : null;
-    const username = authData ? authData.username : null;
 
     // Authentication API
     if (req.method === 'POST' && pathname === '/auth_login') {
@@ -127,8 +91,6 @@ module.exports = async (req, res) => {
 
       if ((!inputUsername && targetPass === 'admin') || command === 'admin') {
         resetFailedAttempts(clientKey);
-        const signedToken = createSignedToken('guest_admin', 'admin');
-        res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${signedToken}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ success: true, role: 'admin', username: 'guest_admin' }));
       }
@@ -155,8 +117,6 @@ module.exports = async (req, res) => {
 
       if (matchedUser) {
         resetFailedAttempts(clientKey);
-        const signedToken = createSignedToken(matchedUsername, matchedUser.role);
-        res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${signedToken}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).end(JSON.stringify({ success: true, role: matchedUser.role, username: matchedUsername }));
       } else {
@@ -186,7 +146,6 @@ module.exports = async (req, res) => {
 
     // Internal Embed Proxy Path
     if (pathname.startsWith('/__proxy/')) {
-      if (!userRole) return res.status(403).end('Unauthorized');
       let targetHost = 'onecompiler.com';
       let targetPath = pathname.replace('/__proxy', '');
       if (targetPath === '' || targetPath === '/') targetPath = '/embed/python';
@@ -215,7 +174,7 @@ module.exports = async (req, res) => {
 
     // Render Full Desktop Environment
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).end(getDesktopEnvironmentHtml(authData));
+    return res.status(200).end(getDesktopEnvironmentHtml());
 
   } catch (err) {
     res.setHeader('Content-Type', 'text/html');
@@ -223,7 +182,7 @@ module.exports = async (req, res) => {
   }
 };
 
-function getDesktopEnvironmentHtml(session) {
+function getDesktopEnvironmentHtml() {
   const dockLogoAscii = ` ███▄ ▄███▓ █   ██ 
 ▓██▒▀█▀ ██▒ ██  ▓██▒
 ▓██    ▓██░▓██  ▒██░
@@ -245,8 +204,6 @@ function getDesktopEnvironmentHtml(session) {
  ░      ░    ░░░ ░ ░   ░░   ░ ░ ░░ ░    ░   
         ░      ░        ░     ░  ░      ░  ░`;
 
-  const isAuth = !!session;
-
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -257,7 +214,7 @@ function getDesktopEnvironmentHtml(session) {
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
     body {
-      background: #050508;
+      background: #000000;
       color: #ffffff;
       height: 100vh;
       width: 100vw;
@@ -268,7 +225,7 @@ function getDesktopEnvironmentHtml(session) {
 
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
 
-    /* Fullscreen Lock Screen */
+    /* Original Boxy Auth Modal Screen */
     #lock-screen {
       position: absolute;
       top: 0;
@@ -276,24 +233,83 @@ function getDesktopEnvironmentHtml(session) {
       width: 100%;
       height: 100%;
       z-index: 10000;
-      background: rgba(10, 10, 15, 0.85);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
-      display: ${isAuth ? 'none' : 'flex'};
-      flex-direction: column;
+      display: flex;
       align-items: center;
       justify-content: center;
+      background: rgba(0, 0, 0, 0.4);
     }
 
-    .lock-box {
-      width: 480px;
+    .boxy-card {
+      width: 380px;
       padding: 30px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: rgba(20, 20, 25, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-top: 1px solid rgba(255, 255, 255, 0.6);
       border-radius: 12px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9);
-      backdrop-filter: blur(25px);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
       text-align: center;
+    }
+
+    .boxy-title {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 18px;
+      font-weight: bold;
+      color: #ffffff;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .boxy-subtitle {
+      font-size: 12px;
+      color: #aaaaaa;
+      margin-bottom: 20px;
+      font-family: monospace;
+    }
+
+    .boxy-input {
+      width: 100%;
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 6px;
+      color: #ffffff;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+      outline: none;
+      text-align: center;
+      transition: border 0.2s;
+    }
+
+    .boxy-input:focus {
+      border-color: rgba(255, 255, 255, 0.7);
+    }
+
+    .boxy-btn {
+      width: 100%;
+      margin-top: 15px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 6px;
+      color: #ffffff;
+      font-family: 'Courier New', Courier, monospace;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .boxy-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    #lock-err {
+      margin-top: 12px;
+      font-size: 11px;
+      color: #ff4444;
+      font-family: monospace;
+      min-height: 14px;
     }
 
     /* Desktop Window Layer */
@@ -304,19 +320,19 @@ function getDesktopEnvironmentHtml(session) {
       width: 100%;
       height: calc(100% - 75px);
       z-index: 2;
-      display: ${isAuth ? 'block' : 'none'};
+      display: none;
     }
 
-    /* Restored High-Contrast Frosted Glass Windows */
+    /* Bright Frosted Glass Windows */
     .wm-window {
       position: absolute;
-      background: rgba(25, 25, 30, 0.65);
+      background: rgba(25, 25, 30, 0.75);
       border: 1px solid rgba(255, 255, 255, 0.3);
       border-top: 1px solid rgba(255, 255, 255, 0.5);
       border-radius: 10px;
       box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.2);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -416,17 +432,6 @@ function getDesktopEnvironmentHtml(session) {
       user-select: text;
     }
 
-    #lock-input {
-      width: 100%;
-      padding: 10px;
-      margin-top: 15px;
-      background: rgba(0, 0, 0, 0.5);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      border-radius: 6px;
-      color: #fff;
-      text-align: center;
-    }
-
     /* macOS Dock Styling */
     #dock-container {
       position: absolute;
@@ -434,11 +439,11 @@ function getDesktopEnvironmentHtml(session) {
       left: 50%;
       transform: translateX(-50%);
       z-index: 9999;
-      display: ${isAuth ? 'block' : 'none'};
+      display: none;
     }
 
     .dock {
-      background: rgba(20, 20, 20, 0.6);
+      background: rgba(20, 20, 20, 0.65);
       border: 1px solid rgba(255, 255, 255, 0.25);
       border-radius: 16px;
       padding: 6px 12px;
@@ -505,12 +510,14 @@ function getDesktopEnvironmentHtml(session) {
 <body>
   <div id="particles-js"></div>
 
-  <!-- Terminal Lock Screen -->
+  <!-- Standard Boxy Password Screen -->
   <div id="lock-screen">
-    <div class="lock-box">
-      <pre class="ascii-banner">${termBanner}</pre>
-      <div id="lock-msg" style="margin-top:15px; font-family:monospace; color:#aaa; font-size:12px;">SYSTEM LOCKED - ENTER AUTH PASSPHRASE</div>
-      <input type="password" id="lock-input" placeholder="Password" autofocus onkeydown="handleLockSubmit(event)">
+    <div class="boxy-card">
+      <div class="boxy-title">AUTHENTICATION</div>
+      <div class="boxy-subtitle">Enter password to unlock system</div>
+      <input type="password" id="lock-input" class="boxy-input" placeholder="Password" autofocus onkeydown="if(event.key==='Enter') submitAuth()">
+      <button class="boxy-btn" onclick="submitAuth()">UNLOCK</button>
+      <div id="lock-err"></div>
     </div>
   </div>
 
@@ -535,26 +542,32 @@ function getDesktopEnvironmentHtml(session) {
 
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script>
+    /* Default Standard ParticlesJS Config */
     particlesJS('particles-js', {
       particles: {
-        number: { value: 70, density: { enable: true, value_area: 800 } },
+        number: { value: 80, density: { enable: true, value_area: 800 } },
         color: { value: '#ffffff' },
-        shape: { type: 'circle' },
-        opacity: { value: 0.35 },
-        size: { value: 2.5, random: true },
-        line_linked: { enable: true, distance: 130, color: '#ffffff', opacity: 0.18, width: 1 },
-        move: { enable: true, speed: 1.2 }
-      }
+        shape: { type: 'circle', stroke: { width: 0, color: '#000000' } },
+        opacity: { value: 0.5, random: false },
+        size: { value: 3, random: true },
+        line_linked: { enable: true, distance: 150, color: '#ffffff', opacity: 0.4, width: 1 },
+        move: { enable: true, speed: 6, direction: 'none', random: false, straight: false, out_mode: 'out', bounce: false }
+      },
+      interactivity: {
+        detect_on: 'canvas',
+        events: { onhover: { enable: true, mode: 'repulse' }, onclick: { enable: true, mode: 'push' }, resize: true },
+        modes: { repulse: { distance: 100, duration: 0.4 }, push: { particles_nb: 4 } }
+      },
+      retina_detect: true
     });
 
-    let currentSession = ${JSON.stringify(session)};
+    let currentSession = null;
     let activeZIndex = 100;
     const windows = {};
 
-    async function handleLockSubmit(e) {
-      if (e.key !== 'Enter') return;
+    async function submitAuth() {
       const inputEl = document.getElementById('lock-input');
-      const msgEl = document.getElementById('lock-msg');
+      const errEl = document.getElementById('lock-err');
       const val = inputEl.value.trim();
 
       try {
@@ -574,14 +587,13 @@ function getDesktopEnvironmentHtml(session) {
           if (data.role === 'idiot') openWindow('idiot');
           else if (data.role === 'coming_soon') openWindow('coming_soon');
           else if (data.role === 'credits') openWindow('credits');
-          else openWindow('proxy');
+          else openWindow('terminal');
         } else {
-          msgEl.style.color = '#ff4444';
-          msgEl.innerText = data.cliOutput || data.message || 'ACCESS DENIED';
+          errEl.innerText = data.cliOutput || data.message || 'Incorrect password.';
           inputEl.value = '';
         }
       } catch (err) {
-        msgEl.innerText = 'Network error during login.';
+        errEl.innerText = 'Network connection failed.';
       }
     }
 
@@ -733,12 +745,6 @@ Logged in as: \${currentSession ? currentSession.username : 'guest'}</div>
       logEl.innerHTML += '\\nuser@murke:~$ ' + cmd;
       inputEl.value = '';
     }
-
-    window.onload = () => {
-      if (currentSession) {
-        openWindow('terminal');
-      }
-    };
   </script>
 </body>
 </html>`;
