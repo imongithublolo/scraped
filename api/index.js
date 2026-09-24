@@ -10,16 +10,33 @@ function hashPassword(plainTextPassword) {
   return crypto.scryptSync(plainTextPassword, SALT, 64).toString('hex');
 }
 
-// Pre-hashed password map (Passwords stored securely as hashes)
-const HASHED_PASSWORDS = {
-  MAIN: hashPassword(process.env.APP_MAIN_PASSWORD || 'MarkX99'),
-  IDIOT: hashPassword('67'),
-  COMING_SOON: hashPassword('310554'),
-  CREDITS: hashPassword('credits99x55')
+// Multi-User Database Architecture
+// Stores user credentials, hashed passwords, and granted roles
+const USERS = {
+  b29s: {
+    passwordHash: hashPassword('Wspeed67.100.455310'),
+    role: 'admin'
+  },
+  main_user: {
+    passwordHash: hashPassword(process.env.APP_MAIN_PASSWORD || 'MarkX99'),
+    role: 'main'
+  },
+  idiot_user: {
+    passwordHash: hashPassword('67'),
+    role: 'idiot'
+  },
+  coming_soon_user: {
+    passwordHash: hashPassword('310554'),
+    role: 'coming_soon'
+  },
+  credits_user: {
+    passwordHash: hashPassword('credits99x55'),
+    role: 'credits'
+  }
 };
 
-function createSignedToken(role) {
-  const payload = Buffer.from(JSON.stringify({ role, exp: Date.now() + 86400000 })).toString('base64url');
+function createSignedToken(username, role) {
+  const payload = Buffer.from(JSON.stringify({ username, role, exp: Date.now() + 86400000 })).toString('base64url');
   const signature = crypto.createHmac('sha256', SALT).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
@@ -32,7 +49,7 @@ function verifyToken(token) {
   if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
     try {
       const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-      if (data.exp > Date.now()) return data.role;
+      if (data.exp > Date.now()) return data;
     } catch (e) {
       return null;
     }
@@ -86,7 +103,9 @@ module.exports = async (req, res) => {
 
     const cookies = req.headers.cookie || '';
     const token = getCookieValue(cookies, AUTH_COOKIE_NAME);
-    const userRole = verifyToken(token);
+    const authData = verifyToken(token);
+    const userRole = authData ? authData.role : null;
+    const username = authData ? authData.username : null;
 
     // 1. Local static assets serving
     if (pathname === '/opsec.webp' || pathname === '/guby.mp3') {
@@ -100,7 +119,7 @@ module.exports = async (req, res) => {
       return res.status(404).end('Not found');
     }
 
-    // 2. Authentication Login Endpoint
+    // 2. Multi-User Authentication Login Endpoint
     if (req.method === 'POST' && pathname === '/auth_login') {
       const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown_ip';
       const clientKey = `${clientIp}`;
@@ -120,31 +139,43 @@ module.exports = async (req, res) => {
         bodyStr += chunk;
       }
 
+      let inputUsername = '';
       let inputPassword = '';
       try {
         const json = JSON.parse(bodyStr);
+        inputUsername = (json.username || '').trim();
         inputPassword = json.password || '';
       } catch (e) {}
 
       const inputHash = hashPassword(inputPassword);
 
-      let grantedRole = null;
-      if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(HASHED_PASSWORDS.IDIOT))) {
-        grantedRole = 'idiot';
-      } else if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(HASHED_PASSWORDS.COMING_SOON))) {
-        grantedRole = 'coming_soon';
-      } else if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(HASHED_PASSWORDS.CREDITS))) {
-        grantedRole = 'credits';
-      } else if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(HASHED_PASSWORDS.MAIN))) {
-        grantedRole = 'main';
+      let matchedUser = null;
+      let matchedUsername = null;
+
+      // Check if username is explicitly provided
+      if (inputUsername && USERS[inputUsername]) {
+        const candidate = USERS[inputUsername];
+        if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(candidate.passwordHash))) {
+          matchedUser = candidate;
+          matchedUsername = inputUsername;
+        }
+      } else {
+        // Direct password match fallback for global legacy passwords
+        for (const [uname, userObj] of Object.entries(USERS)) {
+          if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(userObj.passwordHash))) {
+            matchedUser = userObj;
+            matchedUsername = uname;
+            break;
+          }
+        }
       }
 
-      if (grantedRole) {
+      if (matchedUser) {
         resetFailedAttempts(clientKey);
-        const signedToken = createSignedToken(grantedRole);
+        const signedToken = createSignedToken(matchedUsername, matchedUser.role);
         res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${signedToken}; Path=/; HttpOnly; SameSite=Lax`);
         res.setHeader('Content-Type', 'application/json');
-        return res.status(200).end(JSON.stringify({ success: true, role: grantedRole }));
+        return res.status(200).end(JSON.stringify({ success: true, role: matchedUser.role, username: matchedUsername }));
       } else {
         const record = registerFailedAttempt(clientKey);
         const newlyBlocked = record.blockedUntil > Date.now();
@@ -154,15 +185,27 @@ module.exports = async (req, res) => {
         return res.status(401).end(JSON.stringify({ 
           success: false,
           blocked: newlyBlocked,
-          message: newlyBlocked ? `Too many wrong attempts! Blocked for ${waitSec}s.` : 'Wrong password'
+          message: newlyBlocked ? `Too many wrong attempts! Blocked for ${waitSec}s.` : 'Invalid credentials'
         }));
       }
     }
 
-    // 3. Render Views & Instant-Clear Temporary Session Cookies for Special Views
+    // 3. Admin Dedicated Page Handling
+    if (pathname === '/admin') {
+      if (userRole === 'admin') {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).end(getAdminShellHtml(username));
+      } else {
+        // Prompt login if unauthenticated or unauthorized
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).end(getParticlesAuthHtml(true));
+      }
+    }
+
+    // 4. Render Views & Instant-Clear Temporary Session Cookies for Special Views
     if (!userRole) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(200).end(getParticlesAuthHtml());
+      return res.status(200).end(getParticlesAuthHtml(false));
     }
 
     if (userRole === 'idiot') {
@@ -183,7 +226,7 @@ module.exports = async (req, res) => {
       return res.status(200).end(getCreditsHtml());
     }
 
-    // 4. Proxy Request for 'main' Authenticated Users
+    // 5. Proxy Request for Authenticated Users ('main' & 'admin')
     let targetPath = pathname;
     let targetHost = 'onecompiler.com';
 
@@ -395,7 +438,89 @@ module.exports = async (req, res) => {
   }
 };
 
-function getParticlesAuthHtml() {
+function getAdminShellHtml(username) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Classes - Admin Panel</title>
+  <link rel="icon" type="image/png" href="https://ssl.gstatic.com/classroom/favicon.png">
+  <link rel="shortcut icon" href="https://ssl.gstatic.com/classroom/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0a0a0c;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: #121216;
+      border-bottom: 1px solid #22222a;
+      padding: 18px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: 0.5px;
+      color: #3b82f6;
+    }
+    .user-tag {
+      font-size: 14px;
+      color: #888899;
+      background: #1a1a24;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid #2a2a38;
+    }
+    main {
+      flex: 1;
+      padding: 40px;
+      max-width: 1000px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .panel-card {
+      background: #121216;
+      border: 1px solid #22222a;
+      border-radius: 8px;
+      padding: 30px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+    p {
+      color: #9999aa;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Admin Dashboard</div>
+    <div class="user-tag">Logged in as: <strong>${username || 'b29s'}</strong></div>
+  </header>
+  <main>
+    <div class="panel-card">
+      <h1>Admin Control Panel Shell</h1>
+      <p>Authentication step complete. Ready to design internal components.</p>
+    </div>
+  </main>
+</body>
+</html>`;
+}
+
+function getParticlesAuthHtml(isAdminPrompt = false) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -418,7 +543,13 @@ function getParticlesAuthHtml() {
       position: relative; 
     }
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
-    .auth-box { position: relative; z-index: 2; }
+    .auth-box { 
+      position: relative; 
+      z-index: 2; 
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
     input { 
       background: #000000; 
       border: 2px solid #ffffff; 
@@ -440,7 +571,8 @@ function getParticlesAuthHtml() {
 <body>
   <div id="particles-js"></div>
   <div class="auth-box">
-    <input type="password" id="pass" placeholder="Password..." autofocus onkeydown="if(event.key==='Enter') submitAuth()">
+    ${isAdminPrompt ? '<input type="text" id="uname" placeholder="Username..." autofocus>' : ''}
+    <input type="password" id="pass" placeholder="Password..." ${!isAdminPrompt ? 'autofocus' : ''} onkeydown="if(event.key==='Enter') submitAuth()">
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
@@ -491,12 +623,15 @@ function getParticlesAuthHtml() {
     });
 
     async function submitAuth() {
+      const unameEl = document.getElementById('uname');
+      const uname = unameEl ? unameEl.value : '';
       const pass = document.getElementById('pass').value;
+
       try {
         const res = await fetch('/auth_login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: pass })
+          body: JSON.stringify({ username: uname, password: pass })
         });
         const data = await res.json();
         if (data.success) {
