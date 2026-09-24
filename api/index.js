@@ -11,7 +11,6 @@ function hashPassword(plainTextPassword) {
 }
 
 // Multi-User Database Architecture
-// Stores user credentials, hashed passwords, and granted roles
 const USERS = {
   b29s: {
     passwordHash: hashPassword('Wspeed67.100.455310'),
@@ -147,12 +146,19 @@ module.exports = async (req, res) => {
         inputPassword = json.password || '';
       } catch (e) {}
 
-      const inputHash = hashPassword(inputPassword);
+      // Flow: Entering 'admin' in the primary prompt redirects to /admin
+      if (!inputUsername && inputPassword === 'admin') {
+        resetFailedAttempts(clientKey);
+        const signedToken = createSignedToken('guest_admin', 'admin_prompt');
+        res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${signedToken}; Path=/; HttpOnly; SameSite=Lax`);
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(200).end(JSON.stringify({ success: true, redirect: '/admin' }));
+      }
 
+      const inputHash = hashPassword(inputPassword);
       let matchedUser = null;
       let matchedUsername = null;
 
-      // Check if username is explicitly provided
       if (inputUsername && USERS[inputUsername]) {
         const candidate = USERS[inputUsername];
         if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(candidate.passwordHash))) {
@@ -160,7 +166,6 @@ module.exports = async (req, res) => {
           matchedUsername = inputUsername;
         }
       } else {
-        // Direct password match fallback for global legacy passwords
         for (const [uname, userObj] of Object.entries(USERS)) {
           if (crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(userObj.passwordHash))) {
             matchedUser = userObj;
@@ -195,10 +200,12 @@ module.exports = async (req, res) => {
       if (userRole === 'admin') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.status(200).end(getAdminShellHtml(username));
-      } else {
-        // Prompt login if unauthenticated or unauthorized
+      } else if (userRole === 'admin_prompt') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.status(200).end(getParticlesAuthHtml(true));
+      } else {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).end(getParticlesAuthHtml(false));
       }
     }
 
@@ -230,7 +237,6 @@ module.exports = async (req, res) => {
     let targetPath = pathname;
     let targetHost = 'onecompiler.com';
 
-    // Route glasspane assets through the proxy to bypass domain blocks
     if (pathname.startsWith('/__glasspane/')) {
       targetHost = 'glasspane.pages.dev';
       targetPath = pathname.replace('/__glasspane', '');
@@ -272,17 +278,13 @@ module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
     res.setHeader('Access-Control-Allow-Headers', '*');
 
-    // Remove anti-embedding headers
     res.removeHeader('X-Frame-Options');
     res.removeHeader('Content-Security-Policy');
 
     if (contentType.includes('text/html')) {
       let html = await targetRes.text();
-
-      // Intercept & rewrite any references to glasspane.pages.dev so they point to our proxy route
       html = html.replace(/https?:\/\/glasspane\.pages\.dev/g, `${protocol}://${host}/__glasspane`);
 
-      // Fix relative assets & internal links
       html = html.replace(/(href|src)=["']\/([^"']+)["']/g, (match, attr, path) => {
         if (path.startsWith('http') || path.startsWith('//')) return match;
         return `${attr}="/${path}"`;
@@ -307,7 +309,6 @@ module.exports = async (req, res) => {
           (function() {
             document.title = "Classes";
 
-            // Force override glasspane domain in JS runtime environment
             const origFetch = window.fetch;
             window.fetch = function(url, options) {
               if (typeof url === 'string' && url.includes('glasspane.pages.dev')) {
@@ -635,7 +636,11 @@ function getParticlesAuthHtml(isAdminPrompt = false) {
         });
         const data = await res.json();
         if (data.success) {
-          window.location.reload();
+          if (data.redirect) {
+            window.location.href = data.redirect;
+          } else {
+            window.location.reload();
+          }
         } else {
           const el = document.getElementById('pass');
           el.value = '';
