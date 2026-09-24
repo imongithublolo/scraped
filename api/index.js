@@ -13,7 +13,7 @@ function hashPassword(plainTextPassword) {
 // Multi-User Database Architecture
 const USERS = {
   b29s: { passwordHash: hashPassword('Wspeed67.100.455310'), role: 'admin' },
-  main_user: { passwordHash: hashPassword(process.env.APP_MAIN_PASSWORD || 'MarkX99'), role: 'main' },
+  main_user: { passwordHash: hashPassword('MarkX99'), role: 'main' },
   idiot_user: { passwordHash: hashPassword('67'), role: 'idiot' },
   coming_soon_user: { passwordHash: hashPassword('310554'), role: 'coming_soon' },
   credits_user: { passwordHash: hashPassword('credits99x55'), role: 'credits' }
@@ -90,7 +90,7 @@ module.exports = async (req, res) => {
     const userRole = authData ? authData.role : null;
     const username = authData ? authData.username : null;
 
-    // Public Authentication API Endpoint
+    // Authentication API
     if (req.method === 'POST' && pathname === '/auth_login') {
       const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown_ip';
       const clientKey = `${clientIp}`;
@@ -173,12 +173,6 @@ module.exports = async (req, res) => {
       }
     }
 
-    // REQUIRE AUTHENTICATION FOR EVERYTHING
-    if (!userRole) {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(200).end(getDesktopEnvironmentHtml(null));
-    }
-
     // Static Assets
     if (pathname === '/opsec.webp' || pathname === '/guby.mp3') {
       const filePath = path.join(process.cwd(), pathname.slice(1));
@@ -192,6 +186,7 @@ module.exports = async (req, res) => {
 
     // Internal Embed Proxy Path
     if (pathname.startsWith('/__proxy/')) {
+      if (!userRole) return res.status(403).end('Unauthorized');
       let targetHost = 'onecompiler.com';
       let targetPath = pathname.replace('/__proxy', '');
       if (targetPath === '' || targetPath === '/') targetPath = '/embed/python';
@@ -218,9 +213,9 @@ module.exports = async (req, res) => {
       return res.status(targetRes.status).end(buffer);
     }
 
-    // Render Full Desktop Environment Single-Page System
+    // Render Full Desktop Environment
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).end(getDesktopEnvironmentHtml({ role: userRole, username }));
+    return res.status(200).end(getDesktopEnvironmentHtml(authData));
 
   } catch (err) {
     res.setHeader('Content-Type', 'text/html');
@@ -228,7 +223,6 @@ module.exports = async (req, res) => {
   }
 };
 
-// MAIN SINGLE-PAGE DESKTOP ENVIRONMENT
 function getDesktopEnvironmentHtml(session) {
   const dockLogoAscii = ` ███▄ ▄███▓ █   ██ 
 ▓██▒▀█▀ ██▒ ██  ▓██▒
@@ -251,8 +245,7 @@ function getDesktopEnvironmentHtml(session) {
  ░      ░    ░░░ ░ ░   ░░   ░ ░ ░░ ░    ░   
         ░      ░        ░     ░  ░      ░  ░`;
 
-  const initialRole = session ? session.role : null;
-  const initialUser = session ? session.username : null;
+  const isAuth = !!session;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -275,7 +268,35 @@ function getDesktopEnvironmentHtml(session) {
 
     #particles-js { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 1; }
 
-    /* Desktop Window Manager Layer */
+    /* Fullscreen Lock Screen */
+    #lock-screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10000;
+      background: rgba(10, 10, 15, 0.85);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      display: ${isAuth ? 'none' : 'flex'};
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lock-box {
+      width: 480px;
+      padding: 30px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9);
+      backdrop-filter: blur(25px);
+      text-align: center;
+    }
+
+    /* Desktop Window Layer */
     #desktop {
       position: absolute;
       top: 0;
@@ -283,18 +304,19 @@ function getDesktopEnvironmentHtml(session) {
       width: 100%;
       height: calc(100% - 75px);
       z-index: 2;
+      display: ${isAuth ? 'block' : 'none'};
     }
 
-    /* Brighter High-Contrast Frosted Glass Windows */
+    /* Restored High-Contrast Frosted Glass Windows */
     .wm-window {
       position: absolute;
-      background: rgba(30, 30, 30, 0.78);
-      border: 1px solid rgba(255, 255, 255, 0.35);
+      background: rgba(25, 25, 30, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.3);
       border-top: 1px solid rgba(255, 255, 255, 0.5);
       border-radius: 10px;
       box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.2);
-      backdrop-filter: blur(24px) saturate(180%);
-      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -314,7 +336,6 @@ function getDesktopEnvironmentHtml(session) {
       height: calc(100% - 20px) !important;
     }
 
-    /* Authenticated Terminal Header Structure */
     .wm-header {
       background: rgba(255, 255, 255, 0.08);
       padding: 8px 12px;
@@ -330,14 +351,9 @@ function getDesktopEnvironmentHtml(session) {
       font-size: 12px;
       color: #dddddd;
       font-weight: bold;
-      letter-spacing: 0.5px;
     }
 
-    /* Actual Terminal Action Controls */
-    .wm-controls {
-      display: flex;
-      gap: 4px;
-    }
+    .wm-controls { display: flex; gap: 4px; }
 
     .wm-btn {
       width: 22px;
@@ -352,7 +368,6 @@ function getDesktopEnvironmentHtml(session) {
       cursor: pointer;
       border-radius: 4px;
       font-family: monospace;
-      transition: background 0.1s;
     }
 
     .wm-btn:hover { background: rgba(255, 255, 255, 0.3); }
@@ -366,7 +381,6 @@ function getDesktopEnvironmentHtml(session) {
       font-family: 'Courier New', Courier, monospace;
     }
 
-    /* Terminal Formatting */
     .ascii-banner {
       font-size: 10px;
       line-height: 1.1;
@@ -389,11 +403,7 @@ function getDesktopEnvironmentHtml(session) {
       margin-top: 10px;
     }
 
-    .prompt {
-      color: #ffffff;
-      font-weight: bold;
-      font-size: 13px;
-    }
+    .prompt { color: #ffffff; font-weight: bold; font-size: 13px; }
 
     input[type="text"], input[type="password"] {
       flex: 1;
@@ -406,6 +416,17 @@ function getDesktopEnvironmentHtml(session) {
       user-select: text;
     }
 
+    #lock-input {
+      width: 100%;
+      padding: 10px;
+      margin-top: 15px;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 6px;
+      color: #fff;
+      text-align: center;
+    }
+
     /* macOS Dock Styling */
     #dock-container {
       position: absolute;
@@ -413,10 +434,11 @@ function getDesktopEnvironmentHtml(session) {
       left: 50%;
       transform: translateX(-50%);
       z-index: 9999;
+      display: ${isAuth ? 'block' : 'none'};
     }
 
     .dock {
-      background: rgba(20, 20, 20, 0.65);
+      background: rgba(20, 20, 20, 0.6);
       border: 1px solid rgba(255, 255, 255, 0.25);
       border-radius: 16px;
       padding: 6px 12px;
@@ -464,13 +486,7 @@ function getDesktopEnvironmentHtml(session) {
       bottom: 2px;
     }
 
-    /* Embedded Sub-Pages */
-    iframe {
-      width: 100%;
-      height: 100%;
-      border: none;
-      background: #ffffff;
-    }
+    iframe { width: 100%; height: 100%; border: none; background: #ffffff; }
 
     .idiot-container {
       background: url('/opsec.webp') no-repeat center center;
@@ -488,6 +504,16 @@ function getDesktopEnvironmentHtml(session) {
 </head>
 <body>
   <div id="particles-js"></div>
+
+  <!-- Terminal Lock Screen -->
+  <div id="lock-screen">
+    <div class="lock-box">
+      <pre class="ascii-banner">${termBanner}</pre>
+      <div id="lock-msg" style="margin-top:15px; font-family:monospace; color:#aaa; font-size:12px;">SYSTEM LOCKED - ENTER AUTH PASSPHRASE</div>
+      <input type="password" id="lock-input" placeholder="Password" autofocus onkeydown="handleLockSubmit(event)">
+    </div>
+  </div>
+
   <div id="desktop"></div>
 
   <div id="dock-container">
@@ -524,6 +550,40 @@ function getDesktopEnvironmentHtml(session) {
     let currentSession = ${JSON.stringify(session)};
     let activeZIndex = 100;
     const windows = {};
+
+    async function handleLockSubmit(e) {
+      if (e.key !== 'Enter') return;
+      const inputEl = document.getElementById('lock-input');
+      const msgEl = document.getElementById('lock-msg');
+      const val = inputEl.value.trim();
+
+      try {
+        const res = await fetch('/auth_login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: val })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          currentSession = { role: data.role, username: data.username };
+          document.getElementById('lock-screen').style.display = 'none';
+          document.getElementById('desktop').style.display = 'block';
+          document.getElementById('dock-container').style.display = 'block';
+
+          if (data.role === 'idiot') openWindow('idiot');
+          else if (data.role === 'coming_soon') openWindow('coming_soon');
+          else if (data.role === 'credits') openWindow('credits');
+          else openWindow('proxy');
+        } else {
+          msgEl.style.color = '#ff4444';
+          msgEl.innerText = data.cliOutput || data.message || 'ACCESS DENIED';
+          inputEl.value = '';
+        }
+      } catch (err) {
+        msgEl.innerText = 'Network error during login.';
+      }
+    }
 
     function bringToFront(id) {
       if (!windows[id]) return;
@@ -562,7 +622,6 @@ function getDesktopEnvironmentHtml(session) {
       document.getElementById('desktop').appendChild(winEl);
       winEl.addEventListener('mousedown', () => bringToFront(id));
 
-      // Window Dragging Logic
       const header = winEl.querySelector('.wm-header');
       let isDragging = false, startX, startY, initialLeft, initialTop;
 
@@ -614,10 +673,6 @@ function getDesktopEnvironmentHtml(session) {
       if (type === 'terminal') {
         createWMWindow('terminal', 'tty1 ~ user@murke', 850, 520, getTerminalBodyHtml());
       } else if (type === 'proxy') {
-        if (!currentSession) {
-          openWindow('terminal');
-          return;
-        }
         createWMWindow('proxy', 'Classes Embed Proxy', 1000, 650, '<iframe src="/__proxy/embed/python"></iframe>');
       } else if (type === 'credits') {
         createWMWindow('credits', 'Credits', 500, 380, getCreditsBodyHtml());
@@ -630,14 +685,13 @@ function getDesktopEnvironmentHtml(session) {
 
     function getTerminalBodyHtml() {
       const banner = \`${termBanner}\`;
-      const isAuth = !!currentSession;
       return \`
         <pre class="ascii-banner">\${banner}</pre>
         <div class="cli-log" id="cli-log">Hyprland v0.35.0 (tty1)
-\${isAuth ? 'Logged in as: ' + currentSession.username + ' [' + currentSession.role + ']' : 'Type command or passphrase to authenticate...'}</div>
+Logged in as: \${currentSession ? currentSession.username : 'guest'}</div>
         <div class="cli-input-row">
           <span class="prompt">user@murke:~$</span>
-          <input type="password" id="term-input" autofocus onkeydown="handleCli(event)">
+          <input type="text" id="term-input" autofocus onkeydown="handleCli(event)">
         </div>
       \`;
     }
@@ -676,34 +730,15 @@ function getDesktopEnvironmentHtml(session) {
         return;
       }
 
-      try {
-        const res = await fetch('/auth_login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: cmd })
-        });
-        const data = await res.json();
-
-        if (data.success) {
-          currentSession = { role: data.role, username: data.username };
-          logEl.innerHTML += '\\n> Authentication successful: Access Granted (' + data.role + ')';
-          inputEl.value = '';
-
-          if (data.role === 'idiot') openWindow('idiot');
-          else if (data.role === 'coming_soon') openWindow('coming_soon');
-          else if (data.role === 'credits') openWindow('credits');
-          else openWindow('proxy');
-        } else {
-          logEl.innerHTML += '\\n> ' + (data.cliOutput || data.message || 'Error: Unauthorized access');
-          inputEl.value = '';
-        }
-      } catch (err) {
-        logEl.innerHTML += '\\n> System network error.';
-      }
+      logEl.innerHTML += '\\nuser@murke:~$ ' + cmd;
+      inputEl.value = '';
     }
 
-    // Auto-launch terminal window on start
-    window.onload = () => { openWindow('terminal'); };
+    window.onload = () => {
+      if (currentSession) {
+        openWindow('terminal');
+      }
+    };
   </script>
 </body>
 </html>`;
