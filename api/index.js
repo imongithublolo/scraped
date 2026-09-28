@@ -1,9 +1,20 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
-const PASSWORDS = {
-  'GiveMePython': 'compiler',
-  'DanIsOpsec310554': 'murke'
+// Generate SHA-256 hashes of the actual passwords on the server
+// Pro-tip: Set these in Vercel Environment Variables so they aren't hardcoded in your git repo!
+const rawCompilerPass = process.env.COMPILER_PASS || 'GiveMePython';
+const rawMurkePass = process.env.MURKE_PASS || 'DanIsOpsec310554';
+
+const hashString = (str) => crypto.createHash('sha256').update(str).digest('hex');
+const TARGET_COMPILER_HASH = hashString(rawCompilerPass);
+const TARGET_MURKE_HASH = hashString(rawMurkePass);
+
+// Timing-safe comparison prevents side-channel timing attacks
+const secureCompare = (inputHash, targetHash) => {
+  if (!inputHash || inputHash.length !== targetHash.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(targetHash));
 };
 
 module.exports = async (req, res) => {
@@ -13,59 +24,52 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `${protocol}://${host}`);
     const pathname = url.pathname;
 
-    // Authentication Endpoint
+    // --- ENCRYPTED AUTHENTICATION ---
     if (req.method === 'POST' && pathname === '/auth_login') {
       let bodyStr = '';
       for await (const chunk of req) { bodyStr += chunk; }
 
-      let inputPassword = '';
+      let incomingHash = '';
       try {
-        const json = JSON.parse(bodyStr);
-        inputPassword = (json.password || '').trim();
+        incomingHash = JSON.parse(bodyStr).payload || '';
       } catch (e) {}
 
-      const dest = PASSWORDS[inputPassword];
+      res.setHeader('Content-Type', 'application/json');
 
-      if (dest) {
-        res.setHeader('Content-Type', 'application/json');
-        return res.status(200).end(JSON.stringify({ 
-          success: true, 
-          redirect: `/${dest}` 
-        }));
+      // Verify hashes securely
+      if (secureCompare(incomingHash, TARGET_COMPILER_HASH)) {
+        return res.status(200).end(JSON.stringify({ success: true, redirect: '/compiler' }));
+      } else if (secureCompare(incomingHash, TARGET_MURKE_HASH)) {
+        return res.status(200).end(JSON.stringify({ success: true, redirect: '/murke' }));
       } else {
-        res.setHeader('Content-Type', 'application/json');
-        return res.status(401).end(JSON.stringify({ 
-          success: false, 
-          message: 'Access Denied.' 
-        }));
+        return res.status(401).end(JSON.stringify({ success: false, message: 'Access Denied.' }));
       }
     }
 
-    // Direct Route Views
+    // --- ROUTING FROM "public" FOLDER ---
     if (pathname === '/compiler') {
-      const html = fs.readFileSync(path.join(process.cwd(), 'views', 'compiler.html'), 'utf8');
+      const html = fs.readFileSync(path.join(process.cwd(), 'public', 'compiler.html'), 'utf8');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(html);
     }
 
     if (pathname === '/murke') {
-      const html = fs.readFileSync(path.join(process.cwd(), 'views', 'murke.html'), 'utf8');
+      const html = fs.readFileSync(path.join(process.cwd(), 'public', 'murke.html'), 'utf8');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).end(html);
     }
 
-    // Proxy Handler for Python Compiler
+    // --- PROXY HANDLER ---
     if (pathname.startsWith('/__proxy/')) {
-      let targetHost = 'onecompiler.com';
       let targetPath = pathname.replace('/__proxy', '');
-      if (targetPath === '' || targetPath === '/') targetPath = '/embed/python';
+      if (!targetPath || targetPath === '/') targetPath = '/embed/python';
 
-      const targetUrl = `https://${targetHost}${targetPath}${url.search}`;
+      const targetUrl = `https://onecompiler.com${targetPath}${url.search}`;
       const targetRes = await fetch(targetUrl, {
         method: req.method,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-          'Referer': `https://${targetHost}/`,
+          'Referer': 'https://onecompiler.com/',
           'Accept': '*/*'
         }
       });
@@ -77,13 +81,14 @@ module.exports = async (req, res) => {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.status(200).end(html);
       }
+      
       const buffer = Buffer.from(await targetRes.arrayBuffer());
       if (contentType) res.setHeader('Content-Type', contentType);
       return res.status(targetRes.status).end(buffer);
     }
 
-    // Default: Lock Screen
-    const lockHtml = fs.readFileSync(path.join(process.cwd(), 'views', 'lock.html'), 'utf8');
+    // --- DEFAULT: SERVE LOCK SCREEN ---
+    const lockHtml = fs.readFileSync(path.join(process.cwd(), 'public', 'lock.html'), 'utf8');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.status(200).end(lockHtml);
 
