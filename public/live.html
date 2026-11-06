@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>murke live</title>
+<!--
+  THE LIVE EMBED SHIM.
+
+  The OS shell runs under Cross-Origin-Embedder-Policy: credentialless
+  (crossOriginIsolated — the proxy stack needs SharedArrayBuffer). A
+  youtube embed inside THAT context is refused at the frame level. But
+  COEP is enforced per-document: this page is served WITHOUT any COEP
+  (see next.config.ts — /live is exempted), so it can host the embed,
+  and the shell embeds THIS page same-origin — which needs no CORP.
+
+  Usage: /live/?v=<youtube-id> — fills the viewport, black, autoplay muted
+  (youtube's own policy; the viewer unmutes inside the player chrome).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  iframe { display: block; width: 100vw; height: 100vh; border: 0; }
+</style>
+</head>
+<body>
+<script>
+  "use strict";
+  var id = "";
+  try {
+    var m = /[?&]v=([\w-]{6,20})/.exec(location.search);
+    if (m) id = m[1];
+  } catch (e) { /* no id — stay black */ }
+  if (/^[\w-]+$/.test(id)) {
+    var f = document.createElement("iframe");
+    f.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(id) +
+            "?autoplay=1&mute=1&playsinline=1&rel=0";
+    f.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen";
+    f.allowFullscreen = true;
+    f.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+    f.title = "youtube live";
+    document.body.appendChild(f);
+  }
+</script>
+</body>
+</html>

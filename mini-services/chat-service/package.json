@@ -1,0 +1,13 @@
+{
+  "name": "murke-chat-mini",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MURKE live chat relay (socket.io, hard-bound to port 3003). In-memory roster only — no message history, nothing persisted.",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.1"
+  }
+}

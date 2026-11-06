@@ -1,0 +1,2 @@
+$ bun --hot index.ts
+[2026/11/06 - 17:54:35] info: daemon wisp relay listening on 0.0.0.0:3031 (path: any — typically /wisp/)

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>murke player</title>
+<!--
+  THE GENERIC YT EMBED SHIM.
+
+  The OS shell runs under Cross-Origin-Embedder-Policy: credentialless
+  (crossOriginIsolated — the proxy stack needs SharedArrayBuffer). A
+  youtube embed inside THAT context is refused at the frame level. But
+  COEP is enforced per-document: this page is served WITHOUT any COEP
+  (see next.config.ts — /ytframe.html is exempted), so it can host the
+  embed AND the IFrame API, and the shell embeds THIS page same-origin —
+  which needs no CORP.
+
+  This is the always-works playback path: youtube's own player serves
+  itself to the USER's browser (their residential IP — no bot wall, no
+  third-party resolver, full length).
+
+  Used by:
+    - the music player's last chain link  (hidden, audio-only, controlled
+      over postMessage by src/lib/murke/embed-audio.ts)
+    - the watch pane's resolve-failed fallback (inline, visible)
+
+  Protocol (postMessage, targetOrigin = parent origin):
+    shim → parent: {murkeYt:"ready",dur} {murkeYt:"tick",t,dur,playing}
+                    {murkeYt:"ended"} {murkeYt:"error",code}
+                    {murkeYt:"blocked"}  (autoplay with sound refused)
+    parent → shim: {murkeYt:"play"} {murkeYt:"pause"} {murkeYt:"seek",t}
+                   {murkeYt:"vol",v} 0..100
+
+  Params: ?v=<youtube id> &mute=1 &vol=<0-100> &autoplay=0 &fallbackmute=1
+    fallbackmute: when autoplay-with-sound is blocked, retry muted instead
+    of reporting "blocked" (visible video frames want this).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #p { display: block; width: 100vw; height: 100vh; border: 0; }
+</style>
+</head>
+<body>
+<div id="p"></div>
+<script>
+  "use strict";
+  var qs = new URLSearchParams(location.search);
+  var id = (qs.get("v") || "").trim();
+  var wantMute = qs.get("mute") === "1";
+  var vol = parseInt(qs.get("vol") || "80", 10);
+  if (!isFinite(vol) || vol < 0 || vol > 100) vol = 80;
+  var autoplay = qs.get("autoplay") !== "0";
+  var fallbackMute = qs.get("fallbackmute") === "1";
+
+  function post(msg) {
+    try { parent.postMessage(msg, location.origin); } catch (e) { /* parent gone */ }
+  }
+
+  var player = null;
+  var apiReady = false;
+  var reported = false;
+  var unmutFallbackTried = false;
+  var poll = null;
+
+  function startPolling() {
+    if (poll) return;
+    poll = setInterval(function () {
+      if (!player || !player.getCurrentTime) return;
+      var t = 0, dur = 0, st = -1;
+      try {
+        t = player.getCurrentTime() || 0;
+        dur = player.getDuration() || 0;
+        st = player.getPlayerState();
+      } catch (e) { return; }
+      // state 3 (buffering) counts as playing — the song is moving, and
+      // the toggle button must not flip to "play" mid-buffer (that made
+      // a second tap re-issue playVideo() forever)
+      post({ murkeYt: "tick", t: t, dur: dur, playing: st === 1 || st === 3 });
+    }, 500);
+  }
+
+  function tryStart(p) {
+    // autoplay with sound: browsers allow it when the TOP frame had a user
+    // activation and the iframe carries allow="autoplay" — the usual case
+    // (the user just clicked the track). When refused: report once, or
+    // retry muted when fallbackMute is set (visible video case).
+    if (wantMute) { p.mute(); }
+    else { p.unMute(); }
+    try { p.setVolume(vol); } catch (e) { /* not yet */ }
+    p.playVideo();
+    setTimeout(function () {
+      var st = -1;
+      try { st = p.getPlayerState(); } catch (e) { /* gone */ }
+      if (st !== 1 && st !== 3) {
+        if (fallbackMute && !unmutFallbackTried) {
+          unmutFallbackTried = true;
+          try { p.mute(); p.playVideo(); } catch (e) { /* gone */ }
+        } else if (!fallbackMute && !reported) {
+          reported = true;
+          post({ murkeYt: "blocked" });
+        }
+      }
+    }, 2000);
+  }
+
+  window.onYouTubeIframeAPIReady = function () {
+    apiReady = true;
+    boot();
+  };
+
+  function boot() {
+    if (!apiReady || player || !/^[\w-]{6,20}$/.test(id)) {
+      if (!/^[\w-]{6,20}$/.test(id)) post({ murkeYt: "error", code: "bad id" });
+      return;
+    }
+    player = new YT.Player("p", {
+      videoId: id,
+      host: "https://www.youtube-nocookie.com",
+      width: "100%",
+      height: "100%",
+      playerVars: {
+        autoplay: autoplay ? 1 : 0,
+        mute: 0,
+        playsinline: 1,
+        rel: 0,
+        origin: location.origin,
+      },
+      events: {
+        onReady: function (e) {
+          var dur = 0;
+          try { dur = e.target.getDuration() || 0; } catch (err) { /* not yet */ }
+          post({ murkeYt: "ready", dur: dur });
+          startPolling();
+          if (autoplay) tryStart(e.target);
+        },
+        onStateChange: function (e) {
+          if (e.data === YT.PlayerState.ENDED) post({ murkeYt: "ended" });
+        },
+        onError: function (e) {
+          // 2 bad param · 5 html5 error · 100 removed/privat · 101/150 embed-refused
+          post({ murkeYt: "error", code: e.data });
+        },
+      },
+    });
+  }
+
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== location.origin) return;
+    var d = ev.data;
+    if (!d || d.murkeYt === undefined || !player) return;
+    try {
+      switch (d.murkeYt) {
+        case "play": player.playVideo(); break;
+        case "pause": player.pauseVideo(); break;
+        case "seek": if (typeof d.t === "number") player.seekTo(Math.max(0, d.t), true); break;
+        case "vol": if (typeof d.v === "number") { player.setVolume(Math.max(0, Math.min(100, d.v))); player.unMute(); } break;
+      }
+    } catch (e) { /* player gone */ }
+  });
+
+  var s = document.createElement("script");
+  s.src = "https://www.youtube.com/iframe_api";
+  s.onerror = function () { post({ murkeYt: "error", code: "api load failed" }); };
+  document.head.appendChild(s);
+  // if the api script never answers, say so after 12s
+  setTimeout(function () {
+    if (!player) post({ murkeYt: "error", code: "api timeout" });
+  }, 12000);
+</script>
+</body>
+</html>
