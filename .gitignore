@@ -1,0 +1,10 @@
+skills/
+node_modules/
+
+# legacy murke components kept on disk but excluded from the build + deploy
+legacy-src/
+.next/
+dev.log
+tool-results/
+tsconfig.tsbuildinfo
+upload/
